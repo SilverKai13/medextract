@@ -8,9 +8,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
-
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -68,6 +65,10 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      # ghcr.io repository names must be lowercase; github.repository preserves
+      # the owner's actual case (SilverKai13), so it can't be used as-is.
+      - name: Set image name
+        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v3
 
       - name: Build image
@@ -116,6 +117,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Set image name
+        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
