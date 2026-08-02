@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+.env
+
+# Training output, exported graphs, downloaded corpora and the tracking store
+# are all reproducible from the scripts and too large to version.
+artifacts/*
+!artifacts/.gitkeep
+mlruns/
+data/
+*.onnx
+*.onnx_data
+docs/benchmark.json

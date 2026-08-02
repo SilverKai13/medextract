@@ -1,0 +1,43 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    healthcheck:
+      # Qdrant's image has no curl or wget, so probe from inside with bash's
+      # /dev/tcp rather than adding a package just to health check it.
+      test: ["CMD-SHELL", "bash -c ': > /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MEDEXTRACT_MODEL_DIR: /app/artifacts/onnx
+      MEDEXTRACT_EMBEDDING_ONNX_DIR: /app/artifacts/embedder
+      MEDEXTRACT_BACKEND: onnx
+      MEDEXTRACT_QDRANT_URL: http://qdrant:6333
+      MEDEXTRACT_QDRANT_COLLECTION: pubmed_abstracts
+      MEDEXTRACT_MODEL_VERSION: ${MEDEXTRACT_MODEL_VERSION:-dev}
+      MEDEXTRACT_LOG_LEVEL: INFO
+    volumes:
+      # Exported artefacts stay outside the image: they change on a different
+      # cadence to the code, and baking a few hundred MB of weights into every
+      # build makes each one slow to push.
+      - ./artifacts:/app/artifacts:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  qdrant_storage:
