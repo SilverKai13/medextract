@@ -12,5 +12,7 @@ numpy>=1.26,<3.0
 httpx>=0.27,<1.0
 onnxruntime>=1.17,<2.0
 tokenizers>=0.19,<1.0
-transformers>=4.40,<6.0
+# transformers 5.x made every tokenizer report is_fast=True, breaking the
+# fast-tokenizer guard data.py relies on.
+transformers>=4.40,<5.0
 qdrant-client>=1.9,<2.0

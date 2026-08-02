@@ -45,7 +45,9 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev]" onnx onnxruntime transformers qdrant-client httpx
+          # transformers>=5 made every tokenizer report is_fast=True, which
+          # breaks the fast-tokenizer guard in data.py -- see pyproject.toml.
+          pip install -e ".[dev]" onnx onnxruntime "transformers<5" qdrant-client httpx
 
       - name: pytest
         run: pytest -q --cov=medextract --cov-report=term-missing
