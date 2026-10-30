@@ -36,8 +36,11 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN /opt/venv/bin/pip install --no-deps .
 
-# Tests, caches and compiled artefacts have no business in the runtime image.
-RUN find /opt/venv -name '__pycache__' -type d -prune -exec rm -rf {} + \
+# Tests, caches, compiled artefacts and the installers themselves have no
+# business in the runtime image: pip and setuptools ship vendored packages that
+# image scanners flag, and nothing here needs an installer once this stage is done.
+RUN /opt/venv/bin/pip uninstall -y pip setuptools \
+    && find /opt/venv -name '__pycache__' -type d -prune -exec rm -rf {} + \
     && find /opt/venv -name 'tests' -type d -prune -exec rm -rf {} + \
     && find /opt/venv -name '*.pyc' -delete
 
@@ -59,6 +62,12 @@ RUN apt-get update \
     && apt-get install --no-install-recommends -y curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 medextract
+
+# The base image's own pip and setuptools go for the same reason; the venv is
+# the only Python environment this image runs.
+RUN python -m pip uninstall -y pip setuptools \
+    && rm -rf /usr/local/lib/python3.11/site-packages/_distutils_hack \
+              /usr/local/lib/python3.11/site-packages/distutils-precedence.pth
 
 COPY --from=builder /opt/venv /opt/venv
 

@@ -87,6 +87,11 @@ what doing them turned up.
   container; they remain accepted in the offline training environment.
 - Base image digest pinning; Trivy image scanning in CI; served NER graph
   verified against its export-time hash at every load.
+- The runtime image carries no pip or setuptools, in the venv or in the base
+  image's own Python. The first Trivy run in CI reported nine HIGH findings,
+  every one in packages vendored by setuptools or in pip itself, none of
+  which anything runs at runtime. Removing the installers removes the
+  findings rather than ignoring them.
 
 ## [0.1.0] - 2026-08-20
 

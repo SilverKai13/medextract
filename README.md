@@ -492,7 +492,9 @@ section taken, which is the easy bug here.
 ## Phase 5 — container and CI
 
 Multi-stage build. The build stage has compilers and pip caches; the runtime
-stage has neither. The runtime installs `requirements-serve.txt`, which
+stage has neither, and no pip or setuptools either: nothing needs an installer
+once the image is built, and their vendored packages are what image scanners
+flag. The runtime installs `requirements-serve.txt`, which
 deliberately excludes torch, datasets, mlflow and the training stack — the
 container runs ONNX graphs, so the PyTorch wheel alone would be larger than the
 entire image. Non-root user (uid 10001), and a `HEALTHCHECK` that hits

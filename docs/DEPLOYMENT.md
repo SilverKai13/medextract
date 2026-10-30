@@ -53,6 +53,12 @@ ARG BASE_IMAGE=python:3.11-slim-bookworm@sha256:94a8fee35252d06ab75856f15f12c7ba
 FROM ${BASE_IMAGE} AS builder
 ```
 
+The runtime stage has no compiler, no pip cache, and no pip or setuptools at
+all: the builder uninstalls them from the venv once the install is done and
+the runtime stage removes the base image's own copies. Nothing the server
+runs needs an installer, and the vendored packages inside setuptools were
+every one of the HIGH findings in the first Trivy scan of the image.
+
 A tag is a moving target: the same build on two days can produce two
 different images with nothing in the repository to show why. With the
 digest, a base change is a commit. To refresh it, inspect the tag and paste
