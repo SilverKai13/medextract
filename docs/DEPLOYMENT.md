@@ -46,7 +46,21 @@ works on a machine with no daemon.
 
 ## The image
 
-Multi-stage, `python:3.11-slim-bookworm`.
+Multi-stage, `python:3.11-slim-bookworm`, pinned by digest:
+
+```dockerfile
+ARG BASE_IMAGE=python:3.11-slim-bookworm@sha256:94a8fee35252d06ab75856f15f12c7bae67b10e8a6da93c7fded82b2610926cd
+FROM ${BASE_IMAGE} AS builder
+```
+
+A tag is a moving target: the same build on two days can produce two
+different images with nothing in the repository to show why. With the
+digest, a base change is a commit. To refresh it, inspect the tag and paste
+the index digest:
+
+```bash
+docker buildx imagetools inspect python:3.11-slim-bookworm
+```
 
 **Build stage** has `build-essential` and pip's caches, installs
 `requirements-serve.txt` into `/opt/venv`, then installs the package with
@@ -73,7 +87,10 @@ which is why `retrieval/export_embedder.py` exists: `sentence-transformers`
 would have dragged torch straight back in.
 
 `requirements-serve.txt` therefore excludes torch, datasets, mlflow and the
-training stack. `transformers` is present only for its fast tokenizer.
+training stack. `transformers` is present only for its fast tokenizer, on
+the 5.x line — [SECURITY.md](SECURITY.md#dependency-posture) explains why
+the image and the training stack differ there, and what was checked before
+they did.
 
 ### Size budget
 
@@ -126,8 +143,9 @@ package purely to health-check it is not worth the layer.
 | Job | Runs |
 |---|---|
 | `lint` | `ruff check`, `ruff format --check` |
-| `test` | pytest with coverage on Python 3.11 and 3.12 |
-| `build` | Build image → enforce 1.5 GB budget → smoke test |
+| `test` | pytest with coverage on Python 3.11 and 3.12, each against transformers 4.x and 5.x |
+| `audit` | `pip-audit --strict` on `requirements-serve.txt`; an advisory audit of the training extras |
+| `build` | Build image → enforce 1.5 GB budget → Trivy scan → smoke test |
 | `publish` | **`v*` tags only** — push to GHCR |
 
 The smoke test starts the container **with no model mounted** and asserts it
@@ -143,8 +161,8 @@ Branch builds stop at `build`. Only a tagged release publishes.
 ### Releasing
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 `docker/metadata-action` tags the image `{version}`, `{major}.{minor}` and
@@ -162,6 +180,8 @@ git push origin v0.1.0
 | `model_loaded` | |
 | `retrieval_available` | `false` means `/search` returns 503 |
 | `labels` | What the model can actually emit — catches a wrong model mounted |
+| `model_sha256` | Which graph is loaded — catches a stale mount |
+| `integrity_verified` | `false` means the graph arrived without a parity record; a *mismatch* never gets this far, it is a load failure |
 | `uptime_seconds` | Restart detection |
 
 ### Logs
@@ -186,6 +206,7 @@ logged** — see [SECURITY.md](SECURITY.md).
 | Symptom | Cause | Fix |
 |---|---|---|
 | `/health` `degraded` | No model at `MEDEXTRACT_MODEL_DIR` | Check the mount; `detail` names the error |
+| `/health` `degraded`, `/extract` 503 with `does not match` | `model.onnx` differs from the hash in its `parity.json` — truncated copy, partial mount, swapped file | Re-run the export, or restore the artefact directory as a unit |
 | `/extract` 503 | Same | Same |
 | `/search` 503 | Qdrant down, or collection never built | `docker compose ps qdrant`, then `make index` |
 | `/search` returns nothing sensible | Index built with hashing fallback vectors | Rebuild with `--recreate`; `allow_fallback` is off by default so this needs an explicit override |
@@ -217,8 +238,12 @@ would rank nonsensically against new queries; the dimension may also differ.
 ## Scaling
 
 The API is stateless apart from a read-only mount, so replicas behind a load
-balancer would work. Nothing here demonstrates it, and the benchmark is serial,
-so the concurrent latency profile is unmeasured — see [TODO.md](TODO.md).
+balancer would work. Nothing here demonstrates replicas, but the single
+container's behaviour under concurrent load is measured: `make loadtest`
+ramps closed-loop concurrency from 1 to 16 against a running service and
+reports client-observed percentiles and throughput at each level —
+[RESULTS.md §4.3](RESULTS.md#43-latency-under-concurrency). That is the
+number a capacity plan starts from.
 
 Qdrant is a single node with a local volume. Its own clustering would be the
 route beyond that.

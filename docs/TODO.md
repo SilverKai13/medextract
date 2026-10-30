@@ -3,68 +3,69 @@
 Remaining work, prioritised. Completed work is in [TASKS.md](TASKS.md); fixed
 defects are in [BUGS.md](BUGS.md).
 
-Nothing here blocks the project being complete — the pipeline runs end to end
-and every documented number is measured. These are the things a next iteration
-should pick up.
+Nothing here blocks the project being complete. The first pass ran the
+pipeline end to end; the second pass measured latency under concurrency and
+score reliability, answered the BC5CDR question, added dependency and image
+scanning, pinned the base by digest, and made the served graph verify itself.
+What follows is what a third iteration would pick up.
 
 ## Priority 1 — gaps in what is currently claimed
 
-### Measure latency under concurrency
+### Hosted deployment
 
-`benchmark.py` times serial calls with tokenisation hoisted out of the loop.
-That is the right measurement for comparing backends, and the wrong one for
-answering "what will a caller see under load?" A p99 measured with one request
-in flight says nothing about a p99 with sixteen.
+Everything runs on one machine behind `localhost`. The compose file, the
+image budget and the smoke test are all there; what is missing is a target.
+A single small VM or a managed container service with TLS termination and
+an API key at the ingress would turn "local deployment" into a URL. The
+README says plainly there is no public URL; this is the item that changes
+that sentence.
 
-Needs a small concurrent harness — `httpx` with an async client against the
-running container, ramping concurrency, reporting throughput and latency at
-each level. Report it separately from the backend comparison; do not conflate
-the two.
+### Authentication and rate limiting
 
-### Add dependency vulnerability scanning to CI
+Deliberately out of the application and at the ingress ([SECURITY.md](SECURITY.md)),
+which means that until there is an ingress there is nothing. Goes with the
+item above.
 
-`pip-audit` or Trivy in the `build` job, failing on high severity. Listed as a
-known gap in [SECURITY.md](SECURITY.md#known-gaps). Cheap to add and currently
-the most obvious hole in an otherwise careful build.
+### Integrity for the query encoder
 
-### Pin base image by digest
-
-`python:3.11-slim-bookworm` is a moving tag. Pinning the digest makes builds
-reproducible and makes a base-image change a visible commit rather than a
-silent one.
+Only the NER graph carries a hash. `artifacts/embedder/model.onnx` is trusted
+as mounted. The same record-at-export, check-at-load pattern applies; it was
+not done because the embedder's export path is a different script and the
+retrieval index would need a matching provenance note to be worth it.
 
 ## Priority 2 — worth doing next
 
-### Train on BC5CDR and compare
+### Fit a calibrator, or do not, deliberately
 
-BC5CDR is registered in `config.DATASETS` with a working loader and a verified
-label ordering, but no arm has been run against it. Two open questions:
+The score's miscalibration is measured ([calibration.md](calibration.md)) and
+the decision not to fit one is recorded ([ADR-023](DECISIONS.md#adr-023--score-stays-uncalibrated-and-the-miscalibration-is-published)).
+If a downstream consumer needs a probability, isotonic regression on a held-out
+split that the sweep never selected on — which means carving one — is the
+route, and the reliability table here is the baseline to beat.
 
-- Does a combined disease + chemical model match two specialised ones?
-- Does the extra chemical supervision help or hurt disease F1?
+### Thread limits and workers
 
-This is a `--dataset bc5cdr` sweep and a table, not new code.
+The load test shows one request saturating all sixteen threads and every
+further caller queueing ([RESULTS.md §4.3](RESULTS.md#43-latency-under-concurrency)).
+`NerEngine` already takes `intra_op_threads`; the experiment is several
+uvicorn workers each pinned to a few threads, against the one-process
+default, on the same harness. It may trade single-request latency for
+throughput, or it may not; it is a measurement, not a decision.
 
-### Report per-type metrics in the sweep table
+### Open-loop load test
 
-`metrics.entity_scores` already computes per-type precision, recall and F1 and
-logs them to MLflow. `report.py` only surfaces the micro figures. On a
-single-type corpus that is the same number, but the moment BC5CDR is swept it
-stops being.
+`loadtest.py` is closed-loop by design ([ADR-022](DECISIONS.md#adr-022--the-load-test-is-closed-loop-end-to-end-and-reported-apart-from-the-benchmark)):
+it answers "what do N waiting callers see". An arrival-rate test answers "at
+what request rate does the queue grow without bound", which a capacity plan
+also wants. Different harness, same reporting.
 
-### Calibrate confidence, or stop implying it is calibrated
+### Serve the BC5CDR model by default?
 
-`score` is a mean softmax value. It orders predictions usefully; it is not a
-probability of correctness, and `min_score` invites callers to treat it as one.
-Either fit a calibration on the validation split and report reliability, or say
-plainly in the API docs that it is an ordering signal only.
-
-### Artefact integrity check at load
-
-Nothing verifies that `model.onnx` is the graph the parity check passed. A
-hash written into `parity.json` at export and checked at startup would close
-it, and would surface a partial mount or a truncated copy immediately rather
-than as strange predictions.
+It emits two types and its PubMedBERT arm is the best-supported result in the
+project. The default stays NCBI-Disease because that is the corpus the target
+was set on. Switching the default is a one-line change and a README rewrite;
+the question is whether the headline should be the brief's number or the
+more useful model.
 
 ## Priority 3 — larger scope
 
@@ -105,3 +106,4 @@ Reasoning in [PRD.md](PRD.md) and [DECISIONS.md](DECISIONS.md).
 | Built-in auth / rate limiting | Belongs at the ingress, not in the application |
 | Async workers or a queue | Extraction is a synchronous forward pass of a few milliseconds; a broker would be more moving parts than the latency justifies |
 | Clinical validation | Not a medical device |
+| Re-running the NCBI sweep on transformers 5 | The numbers would not change and the record says which line produced them ([ADR-019](DECISIONS.md#adr-019--the-serving-image-ships-transformers-5-the-measurements-stay-on-4)) |

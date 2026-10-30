@@ -148,7 +148,9 @@ flowchart LR
 Weights are mounted, not baked in. They change on a different cadence to the
 code, and putting a few hundred megabytes into every image build makes each one
 slow to push. The consequence is that the image is useful without them —
-`/health` reports `degraded` and says what is missing.
+`/health` reports `degraded` and says what is missing. The mount is trusted
+only as far as its hash: the graph is checked against the digest recorded
+when it passed parity, and a mismatch is a load failure, not a warning.
 
 Without Docker, `retrieval/index.build_client` accepts a filesystem path and
 opens an embedded on-disk Qdrant instead, so the whole system runs from a

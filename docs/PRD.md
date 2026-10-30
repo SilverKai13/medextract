@@ -49,7 +49,8 @@ endpoint-level behaviour in [SPEC.md](SPEC.md).
 - Extract disease and chemical spans with type, character offsets, confidence.
 - Batch extraction in one call.
 - Semantic search over an indexed PubMed corpus, with entities tagged in hits.
-- Health endpoint reporting model, backend, label set and retrieval state.
+- Health endpoint reporting model, backend, label set, retrieval state, and
+  whether the loaded graph is the one the parity check passed.
 - Reproducible training with tracked hyperparameters and results.
 - ONNX export gated on a parity check.
 - Container that serves without PyTorch.
@@ -84,7 +85,11 @@ endpoint-level behaviour in [SPEC.md](SPEC.md).
 
 ## Open questions
 
-Tracked in [TODO.md](TODO.md). The substantive ones: whether a combined
-NCBI-Disease + BC5CDR model beats two specialised ones, and what the true
-latency profile looks like under concurrency rather than the serial benchmark
-currently reported.
+Tracked in [TODO.md](TODO.md). The two the first pass left open — whether a
+combined Disease + Chemical model matches two specialised ones, and what the
+latency profile looks like under concurrency — have both been measured; see
+[RESULTS.md §2.8](RESULTS.md#28-bc5cdr-combined-against-single-type) and
+[§4.3](RESULTS.md#43-latency-under-concurrency). What remains open is
+whether to *fit* a calibration for `score` rather than measure and
+document its miscalibration, and what performance on clinical notes would
+be.

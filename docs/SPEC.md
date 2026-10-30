@@ -185,7 +185,9 @@ Liveness plus what is actually loaded.
   "labels": ["O", "B-Disease", "I-Disease"],
   "retrieval_available": true,
   "uptime_seconds": 1284.31,
-  "version": "0.1.0"
+  "version": "1.0.0",
+  "model_sha256": "d48b71b7a0b64db82d598409aa85289d01c9620a9fad6df905206e08b323528d",
+  "integrity_verified": true
 }
 ```
 
@@ -194,6 +196,11 @@ Liveness plus what is actually loaded.
 | `status` | `ok` when a model is loaded, `degraded` otherwise |
 | `labels` | The model's own label set, ordered by id — what it can actually emit |
 | `retrieval_available` | Whether `/search` will work |
+| `model_sha256` | SHA-256 of the `model.onnx` actually loaded; `null` on the torch backend |
+| `integrity_verified` | `true` when that hash matched the one `parity.json` recorded at export. `false` on the torch backend, or when the graph arrived without a record |
+
+A graph whose hash *contradicts* its record does not load at all: `status` is
+`degraded` and `/extract` returns 503 with both hashes in `detail`.
 
 **Returns `200` even when degraded.** The container is running and can say why
 it is not useful, which is more diagnosable than a dead endpoint or a crash

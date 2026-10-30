@@ -84,6 +84,29 @@ Status: **Done** · **Blocked** · **Open**
 | 3.21 | [HANDOVER.md](HANDOVER.md) | Done |
 | 3.22 | [README.md](README.md) — index | Done |
 
+## Phase 4 — Second pass: the open items
+
+Everything [TODO.md](TODO.md) listed as genuinely unfinished after the first
+run, plus what fell out of doing it.
+
+| # | Task | Status | Notes |
+|---|---|---|---|
+| 4.1 | Audit the serving dependencies | Done | Nine advisories against `transformers` 4.x, every fix on the 5.x line |
+| 4.2 | Prove the 5.x tokenizer is the same tokenizer | Done | Byte-identical ids and offsets on 940 test sentences and 3,000 abstracts |
+| 4.3 | Replace the version pin with a capability check | Done | `tokenization.supports_word_alignment`; suite passes on both lines |
+| 4.4 | Make the ONNX export work on 5.x | Done | Prepared 4-D mask; same graph to 5e-6 |
+| 4.5 | Move the serving image to 5.x | Done | `requirements-serve.txt`; audit clean |
+| 4.6 | Pin the base image by digest | Done | `ARG BASE_IMAGE` in the Dockerfile |
+| 4.7 | Scan dependencies and the image in CI | Done | `audit` job, Trivy step in `build` |
+| 4.8 | Verify the served graph at load | Done | Hash in `parity.json`, checked by `NerEngine`, reported by `/health` |
+| 4.9 | Measure latency under concurrency | Done | `loadtest.py`, closed loop, [loadtest.md](loadtest.md) |
+| 4.10 | Measure whether `score` is a probability | Done | `calibration.py`, [calibration.md](calibration.md) |
+| 4.11 | Train on BC5CDR, combined and single-type | Done | Five arms, [sweep_table_bc5cdr.md](sweep_table_bc5cdr.md) |
+| 4.12 | Per-type columns in the report | Done | Appear only when a second type exists |
+| 4.13 | Export the BC5CDR model with parity | Done | `artifacts/onnx-bc5cdr` |
+| 4.14 | Re-run the pipeline end to end on the final code | Partly | Export, parity, calibration, load test and the image build each re-run on their own; `make all` with the new stage not run on the day — the Docker engine was down, see [PROGRESS.md](PROGRESS.md#what-got-in-the-way) |
+| 4.15 | Update every document that made a claim the above changed | Done | This set |
+
 ## Sequencing notes
 
 Worth recording, because the order mattered:

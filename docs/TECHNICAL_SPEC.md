@@ -280,3 +280,78 @@ Two import-time defences, in the one module every entry point goes through:
   TensorFlow is paired with Keras 3. Nothing here touches TensorFlow, so a TF
   install that happens to be on the machine should have no say in whether
   training starts. `setdefault`, so it remains overridable.
+
+## 13. Tokenizer capability (`tokenization.py`)
+
+Two things downstream need from the tokenizer: `word_ids()` for label
+alignment and an offset mapping for character spans. Both existed only on the
+Rust-backed tokenizers while transformers also shipped pure-Python ones, and
+the guard used to read `is_fast` as a proxy. From 5.x every tokenizer is
+Rust-backed and reports `is_fast=True`, so a guard on the flag either never
+fires or has to be pinned to a library version — which is what the old
+`transformers<5` pin was.
+
+`supports_word_alignment` asks the question directly: tokenise a two-word
+probe with `is_split_into_words=True` and `return_offsets_mapping=True`, then
+call `word_ids()`. A tokenizer that cannot do either raises
+(`NotImplementedError`, `ValueError`) and the guard raises its own error naming
+what is missing. The same code gives the same answer on 4.x and 5.x, which is
+what lets the suite run on both.
+
+Pinned by `test_data.py::test_the_guard_is_decided_by_capability_not_by_the_is_fast_flag`,
+which feeds it an object whose flag says fast and whose behaviour says
+otherwise.
+
+## 14. Artefact integrity (`integrity.py`)
+
+`check_parity` hashes `model.onnx` after the comparison passes and writes the
+digest into `parity.json`. `NerEngine._init_onnx` hashes the file it is about
+to open and compares, before `onnxruntime` ever sees it:
+
+| Record | File | Result |
+|---|---|---|
+| present, matches | — | load, `integrity_verified=True` |
+| present, differs | — | `IntegrityError`, both hashes in the message; `/health` degraded, `/extract` 503 |
+| absent | — | load, `integrity_verified=False`, warning logged |
+
+An absent record is a weaker claim, not a contradiction, which is why it
+degrades the report rather than refusing the load. The hash is streamed in
+1 MB chunks: a 436 MB graph is hashed in about a second at startup and never
+held in memory whole.
+
+The torch backend serves weights no export record describes, so it reports
+`model_sha256: null` and `integrity_verified: false` rather than inventing a
+check it cannot make.
+
+## 15. Prepared attention mask for export on transformers 5 (`export_onnx.py`)
+
+transformers 5 builds BERT's attention mask through utilities that read the
+shape of a position tensor; under the TorchScript tracer that tensor is a
+scalar and the export dies with `IndexError` inside `sdpa_mask`. The same
+utilities return a mask untouched when it already has the prepared 4-D shape
+`(batch, 1, query, key)`.
+
+So on 5.x the export wrapper builds that mask itself from the 2-D padding
+mask — zero where a token may be attended to, the float minimum where it may
+not, the additive form BERT has always used internally — and passes it
+through. On 4.x the wrapper passes the 2-D mask as before. The decision is
+made once per export from the library's major version.
+
+The graph that comes out is the same graph: on the shipped checkpoint, logits
+from the 5.x export match the 4.x export to 4.6e-6 on every real token, and
+both match the PyTorch forward on either version to within the parity
+tolerance.
+
+## 16. Type restriction (`data.py`)
+
+`restrict_types(raw, spec, label_names, keep_types)` turns a multi-type corpus
+into a single-type one: every mention of a type not in `keep_types` becomes
+`O`, and the label list shrinks to `O` plus the kept types' tags. It exists so
+that "does a combined Disease + Chemical model match two specialised ones?"
+can be answered on exactly the same sentences — the two arms differ in nothing
+but the labels.
+
+The relabelled tags are returned as strings with the column's feature type
+declared as `Sequence(Value("string"))`. Without that declaration `datasets.map`
+re-encodes the strings through the column's existing `ClassLabel`, into the
+original integer space, silently ([BUGS.md B13](BUGS.md#b13--datasetsmap-re-encoded-restricted-tags-into-the-wrong-label-space)).

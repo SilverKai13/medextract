@@ -16,7 +16,7 @@ the README result blocks — is written by a script, never typed by hand.
 ```powershell
 git clone <repo> && cd medextract
 .\make.ps1 venv          # ~3 min
-.\make.ps1 test          # ~35s, expect 200 passed, 1 skipped
+.\make.ps1 test          # under a minute, expect 249 passed, 1 skipped
 .\make.ps1 lint          # clean
 ```
 
@@ -27,7 +27,7 @@ If those pass, the environment is sound. Then read, in this order:
 3. [DECISIONS.md](DECISIONS.md) — why it is shaped that way. This is the one
    that saves the most time; most "why on earth would they…" questions are
    answered there.
-4. [BUGS.md](BUGS.md) — twelve defects with root causes. Four of them fail
+4. [BUGS.md](BUGS.md) — thirteen defects with root causes. Five of them fail
    *silently*, and knowing which ones will stop you reintroducing them.
 
 Then, to see it work end to end:
@@ -128,26 +128,30 @@ Everything works on CPU, just slowly. Nothing requires this specific machine.
 
 ## Current state
 
-- All twelve known defects fixed; none open.
+- All thirteen known defects fixed; none open.
 - Pipeline run end to end; every documented number measured on the machine
   above. Full detail in [RESULTS.md](RESULTS.md); the run narrative in
   [PROGRESS.md](PROGRESS.md).
-- 200 tests passing, offline, in about 35 seconds.
-- Next work, prioritised, in [TODO.md](TODO.md). The most valuable item is
-  measuring latency under concurrency — the current benchmark is serial and
-  says nothing about behaviour under load.
+- 249 tests passing and one skipped, offline, in under a minute, on both
+  transformers lines.
+- Latency under concurrency, score reliability and the BC5CDR comparison all
+  measured on the second pass; the serving image is on the transformers 5.x
+  line with a clean dependency audit, a digest-pinned base and a scanned
+  image. Next work, prioritised, in [TODO.md](TODO.md).
 
 ## Honest caveats
 
 Not defects — scope decisions, documented in [PRD.md](PRD.md):
 
-- One entity type as shipped (`Disease`). BC5CDR would add `Chemical` but has
-  not been trained. No genes in either corpus.
+- The default model emits one type (`Disease`). A Disease + Chemical model
+  trained on BC5CDR is exported alongside it (`artifacts/onnx-bc5cdr`) and
+  served by pointing `MEDEXTRACT_MODEL_DIR` at it. No genes in either corpus.
 - Trained on abstracts, not clinical notes. Performance on real notes would be
   substantially worse and nothing here measures it.
 - No negation detection. "No evidence of carcinoma" returns `carcinoma`.
 - No entity linking. "MI" and "myocardial infarction" are unrelated strings.
-- `score` orders predictions; it is not a calibrated probability.
+- `score` orders predictions; it is not a calibrated probability, and that is
+  now measured rather than assumed — [calibration.md](calibration.md).
 - Retrieval over a few thousand abstracts is a demonstration, not a literature
   search.
 - **Not a medical device.** Not validated for clinical use.

@@ -128,6 +128,103 @@ defects.
 
 ---
 
+## 2026-10-30 — Second pass: the open items
+
+The first run left three things [TODO.md](TODO.md) called genuinely
+unfinished — latency under concurrency, dependency scanning, the base image
+pinned by tag — and a handful it called worth doing next. This pass did
+them, and one of them changed the project's shape more than expected.
+
+### The audit, and where it led
+
+`pip-audit` over `requirements-serve.txt` was supposed to be a ten-minute
+addition. It found nine advisories, all against `transformers` 4.57.6, all
+fixed only on the 5.x line — and the project pinned `<5` because 5.x made
+every tokenizer report `is_fast=True`, which the alignment guard read as
+the flag lying.
+
+It was not lying. 5.x removed the pure-Python tokenizers; every tokenizer
+*is* fast. The guard was testing a proxy for the thing it needed, so it was
+rewritten to test the thing: can this tokenizer report `word_ids()` and an
+offset mapping. That gives the same answer on both lines and the pin could
+go.
+
+Two more things had to be true before the image moved. The tokenizer had to
+be the same tokenizer — checked by hashing input ids and offsets for every
+test sentence and every indexed abstract under 4.57.6 and 5.8.1, both
+tokenisers, byte-identical. And the exporter had to work on 5.x, which it
+did not: the new mask utilities read a scalar's shape under TorchScript
+tracing. The fix is to hand them the prepared 4-D mask they return
+untouched; the resulting graph matches the 4.x export to 4.6e-6. The
+serving image is now on 5.x with a clean strict audit; training still allows
+4.x, which produced every measurement; CI runs the suite on both.
+
+A side note on method: an early probe suggested 5.x's PyTorch forward
+disagreed with the graph by 1.7 on real tokens. It was the probe — it
+re-used a model object the tracer had already run through. A clean
+comparison agreed to 1e-5 on padded and unpadded input alike. Worth
+recording because a number that alarming, left unchecked, would have
+justified keeping the pin.
+
+### Integrity, digest, scanners
+
+The parity check now writes the graph's SHA-256 and the engine refuses a
+mismatch at load; the base image is pinned by digest; Trivy scans the built
+image in CI next to the audit. None of it took long. All of it had been on
+the list since August.
+
+### BC5CDR
+
+Five arms, about twenty-five minutes of GPU: three combined, one disease-only,
+one chemical-only, the single-type arms made by relabelling the other type
+as `O` on the same sentences. The combined model matches the specialised
+ones to within seed noise on both types, PubMedBERT wins again and this time
+on test as well, and the PubMedBERT arm is exported with parity next to the
+default model. Full numbers in [RESULTS.md §2.8](RESULTS.md#28-bc5cdr-combined-against-single-type).
+
+The one defect of the pass came out of this: `datasets.map` quietly
+re-encoded the relabelled string tags through the column's old `ClassLabel`,
+into the original integer space. The test asserted the exact tags and
+caught it before any arm ran ([BUGS.md B13](BUGS.md#b13--datasetsmap-re-encoded-restricted-tags-into-the-wrong-label-space)).
+
+### Calibration
+
+The score had always been described as "an ordering, not a probability"
+without a number behind it. Now there is one: expected calibration error
+0.11 on validation, overconfident in every bin, ordering sound. Decided
+against fitting a calibrator ([ADR-023](DECISIONS.md#adr-023--score-stays-uncalibrated-and-the-miscalibration-is-published)).
+
+### Latency under concurrency
+
+`loadtest.py` drives the live API closed-loop at 1 to 16 concurrent callers
+with abstracts as payload, and the pipeline runs it as its last stage. The
+finding is that throughput is flat at four to six abstracts a second
+whatever the concurrency: one request already uses every core, so callers
+queue. Numbers and reading in [RESULTS.md §4.3](RESULTS.md#43-latency-under-concurrency).
+
+### What got in the way
+
+The machine, mostly. Writing two gigabytes of new checkpoints into a synced
+folder set the antivirus scanning for the better part of an hour, during
+which the freshly started container was killed for memory (exit 137) and
+the Docker daemon stopped answering `ps` while still answering `logs`. A
+Docker Desktop restart did not bring the engine back within the session —
+WSL itself had stopped answering — so two things changed shape:
+
+- The load test ran against the same code, model and dependency set as the
+  image, served by uvicorn on the host from a clean `requirements-serve.txt`
+  install (transformers 5.22.1, onnxruntime 1.31.1), rather than against
+  the container. The table says so. Same process model as the container's
+  `CMD`; the host kernel instead of the VM's.
+- The pipeline's new load-test stage is unit-tested but was not run end to
+  end through `make all` on the day. The second image build and its live
+  verification (`/health` with `integrity_verified: true`, `/extract`,
+  `/search`) happened before the daemon went away.
+
+Nothing in the project was at fault, and nothing timed was taken from a
+loaded machine. [ENVIRONMENT.md](ENVIRONMENT.md#known-environment-hazards)
+gained a paragraph.
+
 ## What this run changed about the project's claims
 
 1. **The result tables hold measured numbers.** Every `TODO` is gone, and all
@@ -142,6 +239,20 @@ defects.
 4. **Estimates that turned out wrong were corrected in place**, with the reason
    kept — the image size, and the batch-16 speedup falling outside the
    predicted range.
+
+## What the second pass changed
+
+- "Latency under concurrency is unmeasured" — measured.
+- "No dependency scanning, base image pinned by tag" — two scanners in CI,
+  digest pinned, and the image moved to the transformers line with no
+  advisories.
+- "One entity type, as shipped" — a Disease + Chemical model is exported
+  alongside the default, and the combined-versus-specialised question is
+  answered rather than open.
+- "`score` is not a probability" — now a measurement, with the table a caller
+  needs to use it anyway.
+- "Nothing checks the graph is the one the parity check passed" — it does,
+  at every load.
 
 ## Still not done
 

@@ -324,6 +324,31 @@ someone else, later.
 
 ---
 
+## B13 — `datasets.map` re-encoded restricted tags into the wrong label space
+
+**Found by:** `test_data.py::TestTypeRestriction`, on the first run.
+
+**Symptom.** `restrict_types` relabels a two-type corpus to one type and
+returns string tags in the reduced label space (`O`, `B-Disease`,
+`I-Disease`). The dataset that came back held integers — `[0, 0, 2, 3]` —
+and the alignment step then indexed a three-element label list with a 3.
+
+**Root cause.** The map function returned a column with the same name as an
+existing `ClassLabel` column. With no explicit `features`, `datasets.map`
+keeps the existing feature type for that column and encodes the returned
+strings through it, so `"B-Disease"` became its id in the *original*
+five-label space. Nothing warned; the column simply held plausible-looking
+integers.
+
+**Fix.** Declare the column's type as `Sequence(Value("string"))` in the
+`features` passed to `map`, so the strings stay strings and the reduced label
+list is the only one in play.
+
+**Silent?** Yes, in the sense that matters: with a corpus where the kept type
+happened to have low ids the run would have trained on the wrong labels and
+reported a number. It was caught only because the test asserted the exact
+tags that should come out rather than that a dataset came back.
+
 ## Summary
 
 | ID | Area | Severity | Silent? | Status |
@@ -340,9 +365,11 @@ someone else, later.
 | B10 | MLflow file store | Blocker | No | Fixed |
 | B11 | Subword span shredding | High | **Yes** | Fixed |
 | B12 | cp1252 generated markdown | Medium | Partly | Fixed |
+| B13 | `datasets.map` label re-encoding | High | **Yes** | Fixed |
 
-**Four were silent.** B2 and B3 would have produced a completed run with a
-worse number and no indication anything was wrong; B5's fp16 half would have
+**Five were silent.** B2 and B3 would have produced a completed run with a
+worse number and no indication anything was wrong; B13 would have trained on
+the wrong label ids and reported a number too; B5's fp16 half would have
 doubled sweep time with no error. B11 is the worst of them: it left the
 headline metric intact and correct while degrading the actual product, because
 evaluation and serving measured different things. Those are the expensive kind,

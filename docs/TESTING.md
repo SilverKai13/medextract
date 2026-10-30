@@ -17,7 +17,7 @@ That split is deliberate and it is why the suite has the shape it does. Mixing
 the two would make `pytest` slow, networked, GPU-dependent and
 non-deterministic — which in practice means a suite nobody runs. So there is a
 hard rule: **the test suite never touches the network, never downloads a
-checkpoint, and never needs a GPU.** It runs in about 35 seconds.
+checkpoint, and never needs a GPU.** It runs in under a minute.
 
 What that costs: no test asserts an F1 number. Model quality is the sweep's
 job, recorded in [RESULTS.md](RESULTS.md).
@@ -47,18 +47,21 @@ Session-scoped fixtures: `tiny_model_dir`, `tiny_tokenizer`, `tiny_onnx_dir`
 |---|---|---|
 | `test_labels.py` | 12 | Exact label *positions* against a real fast tokenizer, both subword conventions, alignment length invariance |
 | `test_metrics.py` | 15 | Strict IOB2 span extraction, PRF arithmetic, the seqeval cross-check, the deliberate strict/lenient split |
-| `test_data.py` | 12 | Batched tokenise-and-align, truncation safety, string and integer tags, slow-tokenizer rejection |
+| `test_data.py` | 17 | Batched tokenise-and-align, truncation safety, string and integer tags, the capability guard, type restriction |
 | `test_corpus_sources.py` | 31 | CoNLL and JSONL parsers, three-source fallback order, tokenizer casing guard, effective-batch arithmetic, tracking URI |
 | `test_inference.py` | 28 | Span decoding edge cases, windowing, dedupe, character offsets, actionable load errors |
-| `test_onnx.py` | 7 | Export shape, logit tolerance, decoded-span agreement, parity failure detection, benchmark percentiles |
-| `test_api.py` | 23 | Every endpoint, every error status, request ids, unicode offsets, batch/single equivalence |
+| `test_onnx.py` | 13 | Export shape, logit tolerance, decoded-span agreement, parity failure detection, benchmark percentiles, the integrity record and a tampered graph |
+| `test_api.py` | 26 | Every endpoint, every error status, request ids, unicode offsets, batch/single equivalence, the hash on `/health` |
 | `test_retrieval.py` | 30 | PubMed XML parsing, pagination, retries, rate limiting, embedders, Qdrant indexing and search |
-| `test_pipeline.py` | 14 | Best-arm selection, resume logic, Docker detection, `.env` editing |
-| `test_cli.py` | 25 | Flag wiring and the sweep grid definition |
-| `test_readme_sync.py` | 6 | Marker replacement, idempotence, loud failure on a missing marker |
+| `test_pipeline.py` | 16 | Best-arm selection, resume logic, Docker detection, `.env` editing, the honest not-done wording |
+| `test_cli.py` | 32 | Flag wiring, the sweep grid, per-type report columns, type restriction flags |
+| `test_readme_sync.py` | 9 | Marker replacement, idempotence, loud failure on a missing marker, the optional load-test block |
+| `test_loadtest.py` | 9 | The concurrency harness end to end through an ASGI transport: every level run, errors counted not raised, a degraded service refused |
+| `test_calibration.py` | 12 | Gold spans as character offsets, reliability bins, ECE weighting, threshold table |
 
-**200 tests**, one skipped (the seqeval cross-check when seqeval is not
-importable).
+**250 tests**, one skipped (the seqeval cross-check when seqeval is not
+importable). The same suite passes on transformers 4.x and 5.x; CI runs
+both.
 
 ## Tests worth knowing about
 
@@ -111,6 +114,19 @@ and it only breaks for someone else, later.
 **`test_inference.py::test_long_text_is_windowed_not_truncated`** — an entity
 past the model's context limit is still found.
 
+**`test_onnx.py::TestArtefactIntegrity::test_a_tampered_graph_is_refused_at_load`**
+— one byte appended to `model.onnx` after the parity check, and the engine
+refuses it with both hashes. Its API-level twin asserts the service still
+answers `/health`, degraded, with the reason in `/extract`'s 503.
+
+**`test_data.py::test_the_guard_is_decided_by_capability_not_by_the_is_fast_flag`**
+— a tokenizer whose `is_fast` says one thing and whose behaviour says
+another. The guard believes the behaviour. This is the test that replaced a
+library version pin.
+
+**`test_loadtest.py::test_server_errors_are_counted_not_raised`** — a 500
+mid-run is a data point about the server, not a crash of the harness.
+
 **`test_readme_sync.py::test_real_readme_has_all_four_marker_pairs`** — runs
 against the actual `README.md`, so removing a marker fails CI rather than
 silently leaving stale numbers.
@@ -142,7 +158,8 @@ heavy imports specifically so alignment can be tested without `datasets`.
 | Real latency | Machine-dependent by definition | `make benchmark` → [RESULTS.md §4](RESULTS.md#4-latency) |
 | Image size | Needs a Docker daemon | CI `build` job, hard-fails over 1.5 GB |
 | Live E-utilities | Network, rate limits, flaky by nature | Mocked transports; the real client is exercised by `make fetch` |
-| Concurrency / load | No harness | Nothing — a real gap, see [TODO.md](TODO.md) |
+| Concurrency / load | Machine-dependent | The harness is tested here; `make loadtest` → [RESULTS.md §4.3](RESULTS.md#43-latency-under-concurrency) |
+| Score reliability | Needs the real model and corpus | `make calibrate` → [calibration.md](calibration.md) |
 | Real embedding quality | Needs the encoder downloaded | Nothing — the hashing stub tests the plumbing only |
 
 The `slow` marker exists in `pyproject.toml` for tests needing network or a
@@ -156,13 +173,15 @@ does not mean weakening the default run.
 | Job | Does |
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` |
-| `test` | pytest with coverage on Python 3.11 and 3.12, `fail-fast: false` |
-| `build` | Build the image, enforce the 1.5 GB budget, then start it **with no model mounted** and assert `/health` answers as degraded rather than crash-looping |
+| `test` | pytest with coverage on Python 3.11 and 3.12, each against transformers `<5` and `>=5.10`, `fail-fast: false` |
+| `audit` | `pip-audit --strict` on what the image installs; an advisory audit of the training extras |
+| `build` | Build the image, enforce the 1.5 GB budget, scan it with Trivy, then start it **with no model mounted** and assert `/health` answers as degraded rather than crash-looping |
 | `publish` | On a `v*` tag only, push to GHCR |
 
-The build job installs CPU-only torch from the PyTorch index so the runner does
-not pull ~2.5 GB of CUDA wheels it cannot use, and pins `transformers<5` for
-the reason in `pyproject.toml`.
+The test job installs CPU-only torch from the PyTorch index so the runner does
+not pull ~2.5 GB of CUDA wheels it cannot use. The four-way matrix is what
+makes the "both transformers lines" claim a tested one rather than a stated
+one.
 
 That smoke test is the one worth noting: it verifies a *degraded* start, which
 is the behaviour that makes a broken deployment diagnosable.

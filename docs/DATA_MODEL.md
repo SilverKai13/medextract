@@ -114,7 +114,7 @@ These generate the OpenAPI document, so there is no second description to drift.
 | `BatchExtractResponse` | `results: list[list[EntityOut]]`, `model_version`, `took_ms` |
 | `SearchHit` | `pmid`, `title`, `abstract`, `score`, `journal?`, `year?`, `entities: list[EntityOut]` |
 | `SearchResponse` | `query`, `query_entities`, `hits: list[SearchHit]`, `took_ms` |
-| `HealthResponse` | `status: "ok"\|"degraded"`, `model_loaded`, `model_version`, `backend`, `labels`, `retrieval_available`, `uptime_seconds`, `version` |
+| `HealthResponse` | `status: "ok"\|"degraded"`, `model_loaded`, `model_version`, `backend`, `labels`, `retrieval_available`, `uptime_seconds`, `version`, `model_sha256`, `integrity_verified` |
 | `ErrorResponse` | `detail`, `request_id?` |
 
 `ExtractResponse.text` echoes the input so a caller can confirm the offsets
@@ -190,6 +190,7 @@ artifacts/
   sweep/sweep_results.json   incremental results, written after each arm
   run/model/                 single-run output
   onnx/                      model.onnx + tokenizer + config + parity.json
+  onnx-bc5cdr/               the same for the Disease + Chemical model
   embedder/                  model.onnx + tokenizer + embedder_config.json
   qdrant_local/              embedded Qdrant, when Docker is not used
 data/
@@ -197,6 +198,33 @@ data/
   corpora/<dataset>/         cached corpus files for the direct source
 mlflow.db                    tracking store
 docs/benchmark.json          latency results with hardware
+docs/loadtest.json           latency under concurrency, with the client's hardware
+docs/calibration.json        reliability bins and threshold table
 ```
 
 All of it is reproducible from the scripts and all of it is gitignored.
+
+## `parity.json`
+
+Written by `export_onnx.check_parity` next to `model.onnx`, and only after the
+check passes, so its presence means exactly one thing.
+
+```json
+{
+  "max_abs_logit_diff": 1.4781951904296875e-05,
+  "atol": 0.0001,
+  "rtol": 0.001,
+  "argmax_agreement": 1.0,
+  "entity_spans_match": true,
+  "n_texts": 5,
+  "model_file": "model.onnx",
+  "model_bytes": 435856965,
+  "model_sha256": "d48b71b7a0b64db82d598409aa85289d01c9620a9fad6df905206e08b323528d",
+  "exported_with": {"torch": "2.6.0+cu124", "transformers": "4.57.6", "onnx": "1.22.0", "onnxruntime": "1.26.0"}
+}
+```
+
+`NerEngine` reads `model_sha256` at load and refuses a graph that does not
+match it (`integrity.IntegrityError`). A missing record is logged and the graph
+is served with `integrity_verified: false`; a contradicting one is a load
+failure. See [TECHNICAL_SPEC.md §14](TECHNICAL_SPEC.md#14-artefact-integrity-integritypy).

@@ -69,7 +69,13 @@ product reasoning behind them is in [PRD.md](PRD.md).
 | FR-33 | The exported ONNX graph accepts dynamic batch and sequence axes with pinned input/output names. | `test_onnx.py::test_export_produces_a_graph` |
 | FR-34 | Export is gated on a parity check covering logits, argmax and decoded spans; failure aborts rather than warns. | `test_onnx.py::test_check_parity_reports_and_passes`, `::test_check_parity_fails_when_tolerance_is_impossible`, `::test_both_backends_decode_identical_entities` |
 | FR-35 | The best arm is selected by validation F1, ties broken by test F1, and an empty result set fails with a clear message. | `test_pipeline.py::test_picks_the_highest_validation_f1`, `::test_ties_are_broken_by_test_f1`, `::test_empty_results_raise_with_a_clear_message` |
-| FR-36 | README result tables are rewritten from generated output between marker pairs, and a missing marker fails loudly. | `test_readme_sync.py` (6 tests) |
+| FR-36 | README result tables are rewritten from generated output between marker pairs, and a missing marker fails loudly. | `test_readme_sync.py` (9 tests) |
+| FR-37 | The served ONNX graph is hashed at load and refused if it differs from the hash the parity check recorded; `/health` reports the hash and whether it was verified. | `test_onnx.py::TestArtefactIntegrity` (6), `test_api.py::test_reports_the_graph_hash_on_the_onnx_backend`, `::test_a_tampered_graph_leaves_the_service_degraded_with_the_reason` |
+| FR-38 | Whether a tokenizer can align labels and report character spans is decided by trying it, not by reading a version-dependent flag. | `test_data.py::test_the_guard_is_decided_by_capability_not_by_the_is_fast_flag`, `::test_tokenizer_without_word_alignment_is_rejected_with_an_explanation` |
+| FR-39 | A multi-type corpus can be restricted to named entity types, every other mention becoming `O`, with the label set reduced to match. | `test_data.py::TestTypeRestriction` (4) |
+| FR-40 | The sweep report adds per-type F1 columns when, and only when, an experiment annotates more than one type. | `test_cli.py::TestPerTypeReport` (3) |
+| FR-41 | The load-test harness ramps concurrency against a running service, refuses a degraded one, counts server errors rather than raising on them, and reports percentiles and throughput per level. | `test_loadtest.py` (9) |
+| FR-42 | Score reliability is measured by binning predicted entities by score and comparing mean score with observed precision; the gold spans are derived from the corpus's word tokens. | `test_calibration.py` (12) |
 
 ## Non-functional
 
@@ -88,6 +94,11 @@ product reasoning behind them is in [PRD.md](PRD.md).
 | NFR-11 | Latency is reported as percentiles with the hardware recorded | p50/p90/p95/p99 | [RESULTS.md §4](RESULTS.md#4-latency), `test_onnx.py::test_benchmark_runs_and_reports_percentiles` |
 | NFR-12 | An index is never built from fallback hashing vectors by accident | `allow_fallback=False` by default | `test_cli.py::test_fallback_is_off_by_default` |
 | NFR-13 | Every text read and write names its encoding, so generated files are valid UTF-8 on any platform | No implicit locale encoding | `test_corpus_sources.py::TestTextEncoding` (3) |
+| NFR-14 | What the serving image installs carries no known vulnerability | `pip-audit --strict` on `requirements-serve.txt` | CI `audit` job |
+| NFR-15 | The base image is pinned by digest, so a base change is a visible commit | `ARG BASE_IMAGE=...@sha256:...` | `Dockerfile` |
+| NFR-16 | The built image is scanned, OS packages and Python packages alike | Trivy, fixed HIGH/CRITICAL fail the build | CI `build` job |
+| NFR-17 | Latency under concurrency is measured end to end, not inferred from the serial benchmark | Closed-loop ramp 1→16 | [RESULTS.md §4.3](RESULTS.md#43-latency-under-concurrency) |
+| NFR-18 | The suite passes on both supported transformers lines | 4.x and 5.x | CI `test` matrix |
 
 ## Traceability gaps
 
@@ -96,8 +107,11 @@ Requirements that are *not* covered by an automated test, and why:
 - **NFR-1** needs a GPU, the corpus and roughly 40 minutes. It is measured by
   the sweep and recorded in [RESULTS.md](RESULTS.md), not by pytest.
 - **NFR-3** needs a Docker daemon. Enforced in the CI `build` job.
-- **NFR-11** is machine-dependent by definition. The harness is tested; the
-  numbers are recorded, not asserted.
+- **NFR-11** and **NFR-17** are machine-dependent by definition. The harnesses
+  are tested; the numbers are recorded, not asserted.
+- **NFR-14** and **NFR-16** depend on advisory databases that change under
+  the repository. They are enforced in CI on every push, which is the right
+  cadence for a check whose answer can change with no commit.
 
 This split is deliberate: the test suite verifies that the plumbing is correct,
 and the sweep and benchmark measure how well it works. Mixing them would make

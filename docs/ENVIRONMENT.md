@@ -12,8 +12,8 @@
 `make.ps1 venv` creates the virtualenv with `--system-site-packages`. That is
 deliberate: it reuses an already-installed CUDA build of PyTorch instead of
 re-downloading roughly 2.5 GB of wheels. Packages installed *into* the venv
-still take precedence over the system ones, which is how `transformers<5` gets
-pinned for this project without disturbing anything else on the machine.
+still take precedence over the system ones, so the project's own pins win
+without disturbing anything else on the machine.
 
 If there is no system PyTorch, install one first:
 
@@ -99,6 +99,7 @@ Every measurement in [PROGRESS.md](PROGRESS.md) and
 | Driver / CUDA | 566.07 / 12.7 |
 | Python | 3.13.5 |
 | PyTorch | 2.6.0+cu124 |
+| transformers | 4.57.6 in the training venv (every measurement); 5.22.1 resolved in the serving image |
 | Docker | 20.10.11, compose v2.2.1 |
 
 **The 4 GB matters.** It is why `max_per_device_batch` exists and why the
@@ -109,7 +110,7 @@ Every measurement in [PROGRESS.md](PROGRESS.md) and
 
 | Package | Constraint | Reason |
 |---|---|---|
-| `transformers` | `>=4.40,<5` | 5.x makes every tokenizer report `is_fast=True`, defeating the guard in `data.py:81` that label alignment depends on |
+| `transformers` | `>=4.40,<6` (training); `>=5.10,<6` in the serving image | Both lines are supported and tested. The image takes 5.x because the 4.x line carries nine published advisories; the measurements in [RESULTS.md](RESULTS.md) were produced on 4.57.6 and the tokenizer is byte-identical across the two — see [DECISIONS.md ADR-019](DECISIONS.md#adr-019--the-serving-image-ships-transformers-5-the-measurements-stay-on-4) |
 | `datasets` | `>=2.18` | Any modern version works — the corpus loader no longer depends on script execution |
 | `mlflow` | `>=2.12` | 3.x required for the SQLite backend default; the file store raises in 3.x |
 | `torch` | `>=2.2` | Training and export only. Never in the serving image |
@@ -119,9 +120,6 @@ Every measurement in [PROGRESS.md](PROGRESS.md) and
 
 Each of these bit during setup on this machine. Full write-ups in
 [BUGS.md](BUGS.md).
-
-**Global `transformers` 5.8.1.** Present system-wide and incompatible. The venv
-shadows it; do not run the project with the system Python.
 
 **pyarrow / torch DLL order.** Importing pyarrow after torch and transformers
 have initialised kills the process with an access violation — a segfault, exit
@@ -138,6 +136,15 @@ to fix the order. Symptom: `Windows fatal exception: access violation` inside
 encoding fails on Windows. Symptom:
 `UnicodeDecodeError: 'charmap' codec can't decode byte 0x90`. Always pass
 `encoding="utf-8"`.
+
+**Antivirus and large artefacts.** Writing a few gigabytes of new
+checkpoints into the synced folder set Windows Defender scanning for the
+better part of an hour on 2026-10-30, at full CPU. While it ran, free memory
+fell to about 1 GB, a freshly started API container was killed (exit 137)
+and the Docker daemon stopped answering `docker ps` while still answering
+`docker logs`; a Docker Desktop restart cleared it. Anything timed — the
+benchmark, the load test — has to wait for a quiet machine, and the
+measurement scripts record the hardware for exactly this reason.
 
 **OneDrive.** The repository lives in a synced folder. `HF_HOME` points
 outside it, checkpoints are pruned after each arm, and MLflow uses a single
@@ -162,7 +169,8 @@ about 3.7 GB — see [DATABASE.md](DATABASE.md#filesystem-artefacts).
 ## Verifying a setup
 
 ```powershell
-.\make.ps1 test                                    # 192 passed, 1 skipped
+.\make.ps1 test                                    # all green, 1 skipped
 .\make.ps1 lint                                    # clean
+.\make.ps1 audit                                   # No known vulnerabilities found
 .\.venv\Scripts\python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```

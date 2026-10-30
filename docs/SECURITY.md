@@ -21,9 +21,9 @@ container.
 | T3 | Sensitive text leaking into logs | Operators, log aggregation | Request/response **bodies are never logged**. Only path, method, status, duration, character count and entity count |
 | T4 | Data egress to third parties at inference | Anyone submitting text | None: extraction and search are entirely local. No outbound call is made while serving |
 | T5 | Data egress during corpus fetch | Operator-initiated only | `retrieval/pubmed.py` contacts NCBI E-utilities and sends the configured contact email. Offline path only, never in the serving container |
-| T6 | Supply-chain risk in the image | Deploy | Runtime carries a deliberately narrow dependency set; no compilers, no build caches, no PyTorch |
+| T6 | Supply-chain risk in the image | Deploy | Narrow dependency set with no compilers, build caches or PyTorch; base image pinned by digest; `pip-audit --strict` on what the image installs and Trivy on the built image, both in CI |
 | T7 | Container escape / privilege abuse | Deploy | Non-root `uid 10001`; no capabilities added; artefacts mounted read-only |
-| T8 | Model artefact tampering | Anyone who can write `artifacts/` | Mounted `:ro`. Integrity of the mount is the deployer's responsibility — see [gaps](#known-gaps) |
+| T8 | Model artefact tampering | Anyone who can write `artifacts/` | Mounted `:ro`, and the graph's SHA-256 is checked at load against the hash recorded when it passed the parity check. A mismatch refuses the load; `/health` reports the hash and whether it was verified |
 | T9 | Unauthenticated access | Network reachability | **None built in** — see below |
 
 ## Authentication and authorisation
@@ -105,23 +105,61 @@ From the `Dockerfile`:
 - **Real healthcheck.** Hits `/health` rather than probing the port, so a
   process that is up but broken is reported as such.
 
+- **Base image pinned by digest.** `ARG BASE_IMAGE=python:3.11-slim-bookworm@sha256:…`
+  in the Dockerfile, so a change to the base is a visible commit rather than
+  a silent rebuild. Refreshing it is a deliberate act: inspect the tag,
+  paste the new index digest, commit.
+- **Scanned.** CI runs Trivy over the built image — OS packages and Python
+  packages — and fails on HIGH or CRITICAL findings that have a fix.
+  Unfixed findings are reported, because nothing can be done about them
+  except know.
+
 Not done, and worth doing in a real deployment: a read-only root filesystem,
-`--cap-drop ALL`, a seccomp profile, and pinned base-image digests rather than
-the `python:3.11-slim-bookworm` tag.
+`--cap-drop ALL`, and a seccomp profile.
 
 ## Dependency posture
 
-`requirements-serve.txt` pins compatible ranges rather than exact versions,
-with `transformers>=4.40,<5` bounded for a functional reason documented in
-`pyproject.toml` — 5.x makes every tokenizer report `is_fast=True`, defeating a
-guard the label alignment depends on.
+`requirements-serve.txt` pins compatible ranges rather than exact versions.
+Two scanners run in CI on every push:
 
-CI runs lint and the full suite on every push and both Python 3.11 and 3.12
-before the image is built.
+| Scanner | Scope | Policy |
+|---|---|---|
+| `pip-audit --strict` | What `requirements-serve.txt` resolves to — the Python packages the image installs | Any known vulnerability fails the build |
+| Trivy | The built image: Debian packages and Python packages | HIGH/CRITICAL with a fix available fails the build; unfixed are reported |
+| `pip-audit` (advisory) | The `train`, `serve` and `dev` extras from `pyproject.toml` | Reported, never blocking — see below |
 
-**No automated vulnerability scanning is configured.** Adding `pip-audit` or
-Trivy to the `build` job is the obvious next step; it is listed in
-[TODO.md](TODO.md).
+### Why the image is on transformers 5
+
+The first audit, run on the `transformers>=4.40,<5` pin the project shipped
+with, found nine advisories against 4.57.6, the last 4.x release:
+
+| Advisory | What it is | Fixed in |
+|---|---|---|
+| PYSEC-2025-217 | Deserialisation in the X-CLIP checkpoint conversion script | no 4.x fix |
+| PYSEC-2026-2288 | `Trainer._load_rng_state` calls `torch.load` without `weights_only` | 5.0.0 |
+| PYSEC-2026-2289 | `config.json` can point `_attn_implementation_internal` at a Hub repo and load code from it | 5.3.0 |
+| PYSEC-2026-2290 | `trust_remote_code` overridden by serialised config in the LightGlue loading path | 5.5.0 |
+| PYSEC-2026-3929 | Path traversal through `chat_template` keys in `save_pretrained` | 5.10.0 |
+| PYSEC-2026-4174 | `load_custom_generate` fetches remote code before the consent check | after 5.8.1 |
+
+Not one of those code paths runs in the container: it loads a local
+tokenizer with `HF_HUB_OFFLINE=1`, never calls `from_pretrained` on a model,
+never saves anything, and has no `Trainer`. Arguing each one away would
+have been defensible. It would also have left a `--strict` audit permanently
+red and a reviewer with a list to re-check every time a new advisory
+landed. The 5.x line has none of them, so the better question was whether
+the 5.x tokenizer is the same tokenizer — and that is checkable. Input ids
+and offset mappings were compared on every sentence of the NCBI-Disease test
+split and every indexed abstract, for the NER tokenizer and the query
+encoder's tokenizer, across 4.57.6 and 5.8.1: byte-identical. The pin moved
+to `>=5.10,<6`, the first release with every fix, and the audit is clean.
+
+The training stack still allows 4.x, because that is what every measurement
+in [RESULTS.md](RESULTS.md) was produced on. It runs offline on a developer's
+machine against local checkpoints and local corpus files, so the advisories
+above are accepted there, and the advisory audit in CI exists so that
+acceptance is visible rather than forgotten. Both lines are tested on every
+push.
 
 ## Input validation summary
 
@@ -147,8 +185,11 @@ Beyond information security, the failure modes that matter clinically:
 - **Trained on abstracts, not notes.** Both corpora are edited academic prose.
   Performance on real clinical text — abbreviated, ungrammatical, full of local
   shorthand — would be substantially worse, and nothing here measures that.
-- **Confidence is not calibrated.** `score` is a mean softmax value. It orders
-  predictions usefully; it is not a probability of correctness.
+- **Confidence is not calibrated, and that is measured.** `score` is a mean
+  softmax value. On the validation split it is overconfident across every
+  bin — a mean score of 0.97 against a precision of 0.86 — so `min_score`
+  is a ranking cut-off, not a probability. [calibration.md](calibration.md)
+  has the bins and what each threshold actually buys.
 
 These are scope decisions, documented in [PRD.md](PRD.md), not defects.
 
@@ -158,12 +199,13 @@ Honest list of what a production deployment would still need:
 
 1. Authentication, authorisation and rate limiting at the ingress.
 2. TLS — the service speaks plain HTTP and expects termination upstream.
-3. Automated dependency vulnerability scanning in CI.
-4. Base-image digest pinning.
-5. Artefact integrity verification — nothing checks that `model.onnx` is the
-   graph the parity check passed.
-6. Audit logging, if the deployment needs to answer "who asked what, when".
-7. Read-only root filesystem and dropped capabilities.
+3. Audit logging, if the deployment needs to answer "who asked what, when".
+4. Read-only root filesystem and dropped capabilities.
+5. Integrity of the *query encoder* graph. Only the NER graph carries a
+   hash; `artifacts/embedder/model.onnx` is trusted as mounted.
+
+Closed since the first release: dependency scanning (both scanners in CI),
+base-image digest pinning, and NER artefact integrity at load.
 
 ## Reporting
 

@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-30
+
+The second pass: every item the first run left as "genuinely unfinished", and
+what doing them turned up.
+
+### Added
+
+- **`medextract.loadtest`** — latency under concurrency, measured from the
+  outside. Closed-loop ramp over 1, 2, 4, 8 and 16 concurrent callers against
+  a running API, abstracts as payload, client-observed percentiles and
+  throughput per level, a degraded service refused, server errors counted
+  rather than raised. `make loadtest`; the pipeline runs it as its last stage
+  and the README carries the table.
+- **`medextract.calibration`** — is `score` a probability? Reliability bins,
+  expected calibration error and a `min_score` precision/recall table on a
+  labelled split. `make calibrate`. Measured: overconfident in every bin, ECE
+  0.1123 on validation, ordering sound.
+- **`medextract.integrity`** — the parity check writes the SHA-256 of
+  `model.onnx` into `parity.json`; `NerEngine` hashes the file before opening
+  it and refuses a mismatch with both hashes; `/health` reports `model_sha256`
+  and `integrity_verified`.
+- **`tokenization.supports_word_alignment`** — the fast-tokenizer guard now
+  probes for `word_ids()` and an offset mapping instead of reading `is_fast`,
+  so it gives the same answer on transformers 4.x and 5.x.
+- **`data.restrict_types`** and `--keep-types` on `train` and `sweep` — train
+  a single-type model on a multi-type corpus by relabelling the other types
+  as `O`, so combined and specialised arms differ in nothing but the labels.
+- **Per-type columns in the sweep report**, present only when an experiment
+  annotates more than one type.
+- **BC5CDR results** — five arms (three combined, one disease-only, one
+  chemical-only) answering the two questions the first sweep left open; the
+  PubMedBERT arm exported with parity to `artifacts/onnx-bc5cdr`.
+- **`audit` job in CI** — `pip-audit --strict` over `requirements-serve.txt`,
+  plus an advisory audit of the training extras. `make audit`.
+- **Trivy scan of the built image** in the `build` job: fixed HIGH/CRITICAL
+  findings fail the build.
+- **`tests/test_loadtest.py`** (9) and **`tests/test_calibration.py`** (13);
+  integrity tests in `test_onnx.py` and `test_api.py`; type-restriction tests
+  in `test_data.py`; report-column and flag tests in `test_cli.py`.
+- Seven decision records, ADR-018 to ADR-023, and `TECHNICAL_SPEC.md`
+  sections 13 to 16.
+
+### Changed
+
+- **The serving image installs transformers from the 5.x line**
+  (`requirements-serve.txt`: `>=5.10,<6`). The 4.x line carries nine
+  published advisories with every fix on 5.x. Before the pin moved, input ids
+  and offset mappings were compared across 4.57.6 and 5.8.1 on every sentence
+  of the NCBI-Disease test split and every indexed abstract, for both the NER
+  and query-encoder tokenisers: byte-identical.
+- **`train` and `serve` extras allow `transformers>=4.40,<6`.** The suite
+  passes on both lines; CI's test matrix runs both. Every measurement in
+  `docs/RESULTS.md` was produced on 4.57.6 and says so.
+- **The ONNX exporter hands transformers 5 a prepared 4-D attention mask**,
+  because 5.x's mask utilities cannot be traced by TorchScript. The graph
+  matches the 4.x export to 4.6e-6 on the shipped checkpoint.
+- **The base image is pinned by digest** (`ARG BASE_IMAGE` in the Dockerfile).
+- **`check_parity` writes `parity.json` itself**, with the hash and the
+  library versions that produced the export; `export_onnx.main` no longer
+  writes it separately.
+- `pipeline.not_done_text` no longer claims concurrency is unmeasured; it
+  says whether the load test ran.
+- Version 1.0.0.
+
+### Fixed
+
+- **B13** — `restrict_types` returned tags re-encoded into the original label
+  space: `datasets.map` pushed the returned strings through the column's
+  existing `ClassLabel`. The column's feature type is now declared as strings.
+  Caught by the test that asserts the exact tags, before any arm trained.
+
+### Security
+
+- `pip-audit --strict` over the serving requirements: **no known
+  vulnerabilities**. The nine advisories against the previous 4.x pin
+  (PYSEC-2025-217, PYSEC-2026-2288, -2289, -2290, -3929, -4174) are listed in
+  `docs/SECURITY.md` with what each one is and why none of them ran in the
+  container; they remain accepted in the offline training environment.
+- Base image digest pinning; Trivy image scanning in CI; served NER graph
+  verified against its export-time hash at every load.
+
+## [0.1.0] - 2026-08-20
+
+The first full end-to-end run on real data, and everything that had to be
+fixed to get there.
+
 ### Added
 
 - **`medextract.tokenization`** — a shared fast-tokenizer loader that decides

@@ -417,3 +417,138 @@ this they were measuring different things and nothing said so.
 **Cost.** `decode_entities` needs `word_ids` from the tokenizer. Passing
 `word_ids=None` keeps the old per-token path for callers already working at
 token level, which is what the existing token-level tests exercise.
+
+## ADR-018 — Tokenizer capability is probed, not inferred from a flag
+
+**Context.** Label alignment needs `word_ids()`; character spans need an
+offset mapping. Both came only from the Rust-backed tokenizers, and `is_fast`
+was the proxy. transformers 5 removed the pure-Python implementations, so every
+tokenizer now reports `is_fast=True`. The guard could no longer fail, the test
+that proved it could no longer construct a slow tokenizer, and the project had
+pinned `transformers<5` to keep both.
+
+**Decision.** `tokenization.supports_word_alignment` tokenises a two-word
+probe and asks for `word_ids()` and the offset mapping. If either raises, the
+guard raises with a message naming what is missing. The tests feed it an object
+whose flag lies.
+
+**Why.** A version pin is a statement about a library; a probe is a statement
+about the requirement. The requirement did not change between 4.x and 5.x and
+the probe gives the same answer on both, which is what let the pin go.
+
+**Cost.** One extra tokeniser call at load time, measured in microseconds.
+
+## ADR-019 — The serving image ships transformers 5; the measurements stay on 4
+
+**Context.** The first dependency audit found nine published advisories
+against 4.57.6, every fix on the 5.x line. Every number in
+[RESULTS.md](RESULTS.md) was produced on 4.57.6.
+
+**Decision.** `requirements-serve.txt` pins `transformers>=5.10,<6`. The
+`train` and `serve` extras in `pyproject.toml` allow `>=4.40,<6`. CI tests the
+suite on both lines.
+
+**Why not just move everything?** Because re-running a forty-minute sweep to
+reproduce numbers that would not change is not evidence of anything, and
+claiming the old numbers under a new pin without saying so would be worse. The
+honest shape is: the image runs the line with no advisories; the record says
+which line produced each measurement; the thing that actually crosses from
+one to the other — the tokenizer — was checked to be identical, byte for byte,
+on 940 test sentences and 3,000 abstracts ([SECURITY.md](SECURITY.md#why-the-image-is-on-transformers-5)).
+
+**Why not argue the advisories away?** Each one is in a code path the
+container never runs, and that argument is in SECURITY.md. But a permanently
+red `--strict` audit trains everyone to ignore it, and the next advisory that
+*does* matter would land in the same red list. A clean audit is worth a pin.
+
+**Cost.** Two lines to keep working. The export needed a 5.x-specific path
+(ADR-021); nothing else did.
+
+## ADR-020 — The parity check writes the hash; the engine checks it
+
+**Context.** Nothing verified that the `model.onnx` being served was the one
+the parity check had compared against PyTorch. A truncated copy or a partial
+mount would have surfaced as strange predictions, which is the most expensive
+possible way to find out.
+
+**Decision.** `check_parity` writes the graph's SHA-256 into `parity.json`,
+only after the check passes. `NerEngine` hashes the file before opening it and
+refuses a mismatch with both hashes in the message. `/health` reports the hash
+and whether it was verified.
+
+**Why there and not in a deploy script.** The parity check is the one moment
+the graph is known to be right, so that is where the claim should be written.
+A hash computed anywhere else would be a hash of whatever happened to be on
+disk.
+
+**Why a missing record is a warning, not a refusal.** An older export, or a
+graph that arrived some other way, is a weaker claim rather than a
+contradiction. It loads, logs, and reports `integrity_verified: false`.
+Refusing it would make the field redundant.
+
+**Cost.** About a second at startup to stream 436 MB through SHA-256.
+
+## ADR-021 — On transformers 5 the export builds its own attention mask
+
+**Context.** transformers 5's mask utilities read the shape of a position
+tensor that is a scalar under TorchScript tracing; `torch.onnx.export` dies
+with `IndexError` inside `sdpa_mask`. The dynamo exporter is not available on
+the pinned torch in a form that handles external data for small graphs, and
+upgrading torch to chase an exporter is a larger change than the problem.
+
+**Decision.** When the library's major version is 5 or above, the export
+wrapper converts the 2-D padding mask into the prepared 4-D additive mask
+BERT uses internally, which the utilities return untouched. 4.x is unchanged.
+
+**Why this is safe.** The graph is compared against the PyTorch forward
+afterwards exactly as before, and the 5.x export of the shipped checkpoint
+matches the 4.x export to 4.6e-6 on every real token. The mask the wrapper
+builds is the mask the model would have built.
+
+**Cost.** A version branch in the exporter, and the obligation to re-check it
+when transformers 6 arrives.
+
+## ADR-022 — The load test is closed-loop, end to end, and reported apart from the benchmark
+
+**Context.** `benchmark.py` times the model call in-process with one request
+in flight. It is the right instrument for comparing backends and says nothing
+about what a caller sees under load.
+
+**Decision.** `loadtest.py` drives the running service over HTTP with `c`
+concurrent callers, each waiting for its response before sending the next,
+for a fixed request budget per level. It reports client-observed percentiles
+and throughput at each level and refuses a degraded service.
+
+**Why closed-loop.** It models a fixed pool of upstream callers, which is what
+most consumers of an internal extraction service are, and it cannot overload
+the server into a queueing collapse that would measure the queue rather than
+the service. An open-loop arrival-rate test answers a different question.
+
+**Why the payload is abstracts, not the parity sentences.** The parity
+sentences are short. A caller sends abstracts. Timing the easy input would
+flatter every number.
+
+**Why the two tables are never merged.** The benchmark isolates the backend;
+the load test includes everything from the socket to the JSON. Putting them
+side by side invites reading one as the other.
+
+## ADR-023 — `score` stays uncalibrated, and the miscalibration is published
+
+**Context.** `score` is a mean softmax probability over the span's tokens.
+`min_score` invited callers to read it as a probability of correctness. Nothing
+had measured whether it was one.
+
+**Decision.** Measure it (`calibration.py`), publish the reliability bins and
+what each `min_score` threshold buys in precision and recall, and say in the
+API documentation that the score orders predictions rather than estimating
+their probability. Do not fit a calibrator.
+
+**Why not fit one.** Fitting isotonic or temperature scaling on the validation
+split would spend the only held-out data the sweep selection has not already
+touched, and would make the served score depend on a second artefact that
+could drift from the model it was fitted to. The measured curve is monotone,
+so the ordering is sound; a caller who needs a probability can apply the
+published table to their own threshold.
+
+**Consequence.** The limitation is a number now — an expected calibration
+error on the validation split — rather than a sentence.

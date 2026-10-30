@@ -4,10 +4,13 @@ Every measurement this project has produced, in full, with the command that
 produced it. This is the reference; [PROGRESS.md](PROGRESS.md) is the dated
 narrative of the run that generated it.
 
-**Measured 2026-08-20** on the reference machine ([ENVIRONMENT.md](ENVIRONMENT.md)):
-AMD Ryzen 7 5800H (8C/16T), 16 GB RAM, NVIDIA RTX 3050 Ti Laptop 4 GB, driver
-566.07 / CUDA 12.7, Windows 11 build 26200, Python 3.13.5, torch 2.6.0+cu124,
-onnxruntime 1.26.0.
+**Measured 2026-08-20** (training, export, benchmark, retrieval, container) and
+**2026-10-30** (BC5CDR comparison, integrity record, latency under
+concurrency, score reliability, second container build) on the reference
+machine ([ENVIRONMENT.md](ENVIRONMENT.md)): AMD Ryzen 7 5800H (8C/16T), 16 GB
+RAM, NVIDIA RTX 3050 Ti Laptop 4 GB, driver 566.07 / CUDA 12.7, Windows 11
+build 26200, Python 3.13.5, torch 2.6.0+cu124, transformers 4.57.6 for every
+training run, onnxruntime 1.26.0.
 
 Nothing below was typed by hand. Each section names the artefact it was read
 from and the command that regenerates it.
@@ -27,8 +30,13 @@ from and the command that regenerates it.
 | ONNX speedup, batch 16 | — | **1.32×** | Measured |
 | Serving image | < 1.5 GB | **395 MB** | 26% of budget |
 | PyTorch in serving image | absent | **absent** | Verified inside the image |
-| Configurations compared | ≥ 6 | **9** | With 3 seed repeats |
-| Test suite | offline, fast | **202 passed, 1 skipped, 26 s** | No network, no GPU |
+| Configurations compared | ≥ 6 | **9** on NCBI-Disease, **5** on BC5CDR | With seed repeats on both |
+| Combined vs single-type model, BC5CDR | — | every gap **inside seed noise** | One model, not two — §2.8 |
+| Served graph verified against its parity record | — | **sha256 d48b71b7…** | Checked at every load — §3.1 |
+| Score reliability, validation | — | **ECE 0.1123**, overconfident in every bin | Ranking signal, not a probability — §4.4 |
+| Serving dependencies audited | 0 known vulnerabilities | **0** | `pip-audit --strict`, transformers 5.x — §6 |
+| Abstracts per second, closed loop, any concurrency | — | **4.3–5.8 req/s**, p50 274 ms at one caller | Server-bound; concurrency only queues — §4.3 |
+| Test suite | offline, fast | **249 passed, 1 skipped**, on transformers 4.x and 5.x | No network, no GPU |
 
 ---
 
@@ -198,6 +206,71 @@ have picked differently and worse.
 
 ---
 
+### 2.8 BC5CDR: combined against single-type
+
+Measured 2026-10-30. The two questions §2 left open — does one model trained
+on both types match two trained on one each, and does chemical supervision
+cost disease F1 — on BC5CDR (1,500 PubMed abstracts, diseases and chemicals
+both annotated; 5,228 / 5,330 / 5,865 sentences; 9,586 validation and 9,809
+test gold spans). The single-type arms see exactly the same sentences with
+the other type relabelled `O` (`--keep-types`, [TECHNICAL_SPEC.md §16](TECHNICAL_SPEC.md#16-type-restriction-datapy)).
+
+```powershell
+.\make.ps1 sweep --dataset bc5cdr --experiment medextract-ner-bc5cdr --output-root artifacts/sweep_bc5cdr --only lr3e-5_bs16_ep3 lr3e-5_bs16_ep3_seed1337 pubmedbert_lr3e-5_bs16_ep3
+.\make.ps1 sweep --dataset bc5cdr --experiment medextract-ner-bc5cdr --output-root artifacts/sweep_bc5cdr --only lr3e-5_bs16_ep3 --keep-types Disease
+.\make.ps1 sweep --dataset bc5cdr --experiment medextract-ner-bc5cdr --output-root artifacts/sweep_bc5cdr --only lr3e-5_bs16_ep3 --keep-types Chemical
+.\make.ps1 report --experiment medextract-ner-bc5cdr      # docs/sweep_table_bc5cdr.md
+```
+
+Generated table ([sweep_table_bc5cdr.md](sweep_table_bc5cdr.md)); the per-type
+columns appear because the experiment has two types:
+
+| run | base model | lr | batch | epochs | seed | all subwords | types | val P | val R | val F1 | test F1 | val F1 Chemical | val F1 Disease | test F1 Chemical | test F1 Disease |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lr3e-5_bs16_ep3_chemical | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 42 | False | Chemical | 0.9455 | 0.9416 | 0.9436 | 0.9284 | 0.9436 | - | 0.9284 | - |
+| pubmedbert_lr3e-5_bs16_ep3 | BiomedNLP-PubMedBERT-base-uncased-abstract | 3e-05 | 16 | 3 | 42 | False | - | 0.9041 | 0.9146 | 0.9093 | 0.9014 | 0.9512 | 0.8561 | 0.9397 | 0.8550 |
+| lr3e-5_bs16_ep3 | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 42 | False | - | 0.8947 | 0.8983 | 0.8965 | 0.8886 | 0.9400 | 0.8403 | 0.9312 | 0.8361 |
+| lr3e-5_bs16_ep3_seed1337 | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 1337 | False | - | 0.8921 | 0.8988 | 0.8954 | 0.8886 | 0.9408 | 0.8378 | 0.9300 | 0.8385 |
+| lr3e-5_bs16_ep3_disease | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 42 | False | Disease | 0.8357 | 0.8399 | 0.8378 | 0.8395 | - | 0.8378 | - | 0.8395 |
+
+Per-type precision and recall for the three arms the questions turn on:
+
+| arm | Disease P / R (val) | Disease P / R (test) | Chemical P / R (val) | Chemical P / R (test) |
+|---|---|---|---|---|
+| combined, seed 42 | 0.8499 / 0.8309 | 0.8351 / 0.8370 | 0.9286 / 0.9517 | 0.9198 / 0.9430 |
+| combined, seed 1337 | 0.8381 / 0.8375 | 0.8287 / 0.8486 | 0.9343 / 0.9474 | 0.9249 / 0.9352 |
+| disease only | 0.8357 / 0.8399 | 0.8279 / 0.8515 | — | — |
+| chemical only | — | — | 0.9455 / 0.9416 | 0.9290 / 0.9278 |
+| combined, PubMedBERT | 0.8557 / 0.8565 | 0.8414 / 0.8691 | 0.9419 / 0.9607 | 0.9297 / 0.9499 |
+
+**Seed noise first.** The two combined BioBERT seeds differ by 0.0025 on
+disease F1 and 0.0008 on chemical F1 (validation), 0.0011 on the micro score.
+
+**One model matches two.** Combined against single-type, validation / test:
+disease 0.8403 / 0.8361 against 0.8378 / 0.8395; chemical 0.9400 / 0.9312
+against 0.9436 / 0.9284. Every gap is within the seed spread and reverses
+sign between the splits. The question is answered: nothing measurable is
+gained by serving two models.
+
+**Chemical supervision does not hurt disease F1.** Same numbers, read the
+other way. The combined arm is, if anything, 0.0025 better on validation and
+0.0034 worse on test — noise.
+
+**PubMedBERT, again.** +0.0128 micro validation F1 over BioBERT, +0.0158 on
+disease and +0.0112 on chemical, and this time the test split agrees
+(+0.0128). With 9,586 validation entities the effect is more than ten
+seed-widths; the NCBI result (§2.6) was about three. Same direction, far
+better supported.
+
+**Not comparable with §2.** Disease F1 on BC5CDR (0.84–0.86) is lower than on
+NCBI-Disease (0.86–0.88). Different corpus and different annotation
+guidelines; it is a different task, not a worse model.
+
+The PubMedBERT arm is exported to `artifacts/onnx-bc5cdr` with the same parity
+check as the default model: max logit difference 1.62e-05, argmax agreement
+1.0, spans identical, five labels (`O`, `B-Chemical`, `B-Disease`,
+`I-Disease`, `I-Chemical`).
+
 ## 3. ONNX export and parity
 
 ```powershell
@@ -231,6 +304,24 @@ assumed — getting it wrong produces embeddings that are subtly worse rather
 than obviously broken.
 
 ---
+
+### 3.1 Integrity record
+
+Measured 2026-10-30. The parity check now writes the graph's hash into
+`artifacts/onnx/parity.json` once it passes, and the engine checks it at every
+load ([TECHNICAL_SPEC.md §14](TECHNICAL_SPEC.md#14-artefact-integrity-integritypy)).
+
+| | |
+|---|---|
+| `model.onnx` | 435,856,965 bytes |
+| SHA-256 | `d48b71b7a0b64db82d598409aa85289d01c9620a9fad6df905206e08b323528d` |
+| Parity re-run on the shipped graph | max logit diff 1.48e-05, argmax 1.0, spans identical — unchanged from 2026-08-20 |
+| Reported by the live container | `"integrity_verified": true` on `/health` |
+
+Tampering is tested rather than assumed: one byte appended to a checked
+graph makes `NerEngine` raise `IntegrityError` with both hashes, and the API
+reports `degraded` with the reason in `/extract`'s 503
+(`test_onnx.py::TestArtefactIntegrity`, `test_api.py`).
 
 ## 4. Latency
 
@@ -273,6 +364,100 @@ Single-machine CPU numbers. No GPU was involved and no GPU numbers are
 reported.
 
 ---
+
+### 4.3 Latency under concurrency
+
+Measured 2026-10-30, `.\make.ps1 loadtest` → [loadtest.md](loadtest.md),
+`loadtest.json`. Closed loop: `c` callers, each waiting for its response
+before sending the next, 200 requests per level, ten warm-up requests first
+([ADR-022](DECISIONS.md#adr-022--the-load-test-is-closed-loop-end-to-end-and-reported-apart-from-the-benchmark)).
+
+| | |
+|---|---|
+| Server | `uvicorn medextract.api.main:app`, one process, as the container's `CMD`; served from a clean `requirements-serve.txt` install (transformers 5.22.1, onnxruntime 1.31.1) on the host — the Docker engine was down, see [PROGRESS.md](PROGRESS.md#what-got-in-the-way) |
+| Model | `artifacts/onnx`, `integrity_verified: true`; retrieval disabled, since `/extract` is what is timed |
+| Client | `loadtest.py`, same machine, one httpx connection pool |
+| Payload | 64 abstracts sampled from the fetched corpus (seed 0), mean 1,616 characters, max 4,476 |
+| Machine | CPU 14% before the run, 18% after; nothing else of note running |
+
+| concurrency | requests | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | max (ms) | throughput (req/s) | errors |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 200 | 273.545 | 422.7 | 429.687 | 566.189 | 601.186 | 4.28 | 0 |
+| 2 | 200 | 439.572 | 638.924 | 698.743 | 802.204 | 874.323 | 5.1 | 0 |
+| 4 | 200 | 758.13 | 1083.12 | 1152.977 | 1298.373 | 1413.386 | 5.76 | 0 |
+| 8 | 200 | 1681.483 | 2318.308 | 2458.576 | 2973.302 | 3145.786 | 5.34 | 0 |
+| 16 | 200 | 3821.333 | 5310.078 | 5589.4 | 6173.133 | 6891.5 | 4.72 | 0 |
+
+Client-observed, end to end over HTTP against `/extract` on the `onnx` backend, 64 distinct texts cycled, mean 1616.2 characters (max 4476). Closed loop: each concurrent caller waits for its response before sending the next.
+
+Client on Windows-11-10.0.26200-SP0, 16 vCPU. Server and client share the machine, so these numbers are a ceiling on what this box can serve, not a measurement of the server alone.
+
+**Throughput is flat.** Four to six requests a second at every level, and
+p50 latency rises nearly in step with the number of callers: 274 ms alone,
+440 ms with two, 758 ms with four, 1.7 s with eight, 3.8 s with sixteen.
+Adding callers adds queueing and nothing else. The reason is that one
+request already uses the whole machine: an abstract of 1,600 characters is
+two or three 256-token windows, ONNX Runtime runs them across all sixteen
+threads, and a second request has nowhere to go. On this box the capacity
+is about five abstracts a second — roughly 18,000 an hour — and a p99 under
+600 ms needs the callers kept to one.
+
+The first run of this test happened with an unrelated process holding
+60–90% of the CPU, and it produced the same figures within three percent.
+That is the same point made the other way: the server is the bottleneck,
+not the client or the machine. The route to more throughput is more cores
+or more replicas, not more concurrency; per-session thread limits with
+several workers would be the thing to try next, and it is on the list.
+
+For the record, the contended first run: p50 278 / 454 / 765 / 1,600 /
+3,535 ms and 4.21 / 4.91 / 5.74 / 5.63 / 4.72 req/s at concurrency 1 / 2 /
+4 / 8 / 16. It is not the run reported above, and it differs from it by less
+than the gap between any two levels.
+
+**Read against §4.1.** The serial benchmark's 18 ms is one 15-token sentence
+through the graph. An abstract is two or three windows of up to 256 tokens,
+and attention cost grows with the square of the length, so a 250–280 ms
+request is the same graph doing a hundred times the work, not a slower
+server. The two tables measure different things and are kept apart on
+purpose.
+
+### 4.4 Score reliability
+
+Measured 2026-10-30, `.\make.ps1 calibrate` → [calibration.md](calibration.md),
+`calibration.json`. The served ONNX model over the NCBI-Disease validation
+split; a prediction counts as correct only on exact span and type.
+
+Reliability of `score` on ncbi_disease validation (923 sentences, 787 gold entities, 817 predictions), `onnx` backend.
+
+| score bin | predictions | mean score | precision | gap |
+|---|---|---|---|---|
+| 0.5-0.6 | 8 | 0.5631 | 0.1250 | -0.4381 |
+| 0.6-0.7 | 15 | 0.6589 | 0.4000 | -0.2589 |
+| 0.7-0.8 | 20 | 0.7468 | 0.2000 | -0.5468 |
+| 0.8-0.9 | 32 | 0.8657 | 0.5625 | -0.3032 |
+| 0.9-1.0 | 742 | 0.9928 | 0.9070 | -0.0858 |
+
+Expected calibration error **0.1123**; overall precision 0.8592 against a mean score of 0.9715.
+
+| min_score | entities kept | precision | recall |
+|---|---|---|---|
+| 0.5 | 817 | 0.8592 | 0.8920 |
+| 0.7 | 794 | 0.8753 | 0.8831 |
+| 0.8 | 774 | 0.8928 | 0.8780 |
+| 0.9 | 742 | 0.9070 | 0.8551 |
+| 0.95 | 716 | 0.9176 | 0.8348 |
+| 0.99 | 632 | 0.9383 | 0.7535 |
+
+**Overconfident everywhere.** A mean score of 0.9715 against a precision of
+0.8592, and every bin's precision below its mean score. 742 of 817
+predictions sit in the top bin, where a score of 0.99 corresponds to about
+0.91 precision. Expected calibration error 0.1123.
+
+**The ordering is sound.** Precision rises monotonically with the
+threshold, from 0.8592 at no cut-off to 0.9383 at 0.99, while recall falls
+from 0.8920 to 0.7535. `min_score` works as a ranking cut-off; it does not
+work as a probability. The API documentation says the first and no longer
+implies the second. Whether to fit a calibrator is [ADR-023](DECISIONS.md#adr-023--score-stays-uncalibrated-and-the-miscalibration-is-published).
 
 ## 5. Retrieval
 
@@ -431,6 +616,21 @@ importable — it does not install on current setuptools.
 
 ---
 
+### 6.2 Second build, 2026-10-30
+
+The image was rebuilt on the final code with the base pinned by digest and
+`requirements-serve.txt` on the transformers 5.x line.
+
+| | |
+|---|---|
+| Base | `python:3.11-slim-bookworm@sha256:94a8fee3…` |
+| Resolved in the image | transformers 5.22.1, onnxruntime 1.31.1, tokenizers 0.23.3 |
+| Runtime dependencies, measured | **316 MB** (clean venv from `requirements-serve.txt`, torch absent) |
+| Image size, actually built | **408 MB** — 27% of the 1.5 GB budget (395 MB on 2026-08-20) |
+| `pip-audit --strict -r requirements-serve.txt` | **No known vulnerabilities found** |
+| Same audit against the 4.x pin it replaced | 9 advisories, all in transformers 4.57.6 — [SECURITY.md](SECURITY.md#why-the-image-is-on-transformers-5) |
+| Tokeniser equivalence 4.57.6 ↔ 5.8.1 | input ids and offsets byte-identical on 940 test sentences + 3,000 abstracts, NER and query-encoder tokenisers both |
+
 ## 8. Where the raw numbers live
 
 | Artefact | Contents |
@@ -450,6 +650,11 @@ mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
 ---
+
+| `docs/sweep_table_bc5cdr.md` | `.\make.ps1 report --experiment medextract-ner-bc5cdr` | §2.8 |
+| `artifacts/onnx/parity.json` | `.\make.ps1 export` (written by the parity check) | §3.1 |
+| `docs/loadtest.json`, `docs/loadtest.md` | `.\make.ps1 loadtest` | §4.3 |
+| `docs/calibration.json`, `docs/calibration.md` | `.\make.ps1 calibrate` | §4.4 |
 
 ## 9. What these results do not show
 

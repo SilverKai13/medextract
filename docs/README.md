@@ -57,8 +57,13 @@ supported way to change them.
 | File | Produced by |
 |---|---|
 | [sweep_table.md](sweep_table.md) | `.\make.ps1 report` |
+| [sweep_table_bc5cdr.md](sweep_table_bc5cdr.md) | `.\make.ps1 report --experiment medextract-ner-bc5cdr` |
 | [benchmark.md](benchmark.md) | `.\make.ps1 benchmark` |
 | `benchmark.json` | `.\make.ps1 benchmark` — raw results with hardware |
+| [loadtest.md](loadtest.md) | `.\make.ps1 loadtest`, against a running API |
+| `loadtest.json` | `.\make.ps1 loadtest` — every level, with the client's hardware |
+| [calibration.md](calibration.md) | `.\make.ps1 calibrate` |
+| `calibration.json` | `.\make.ps1 calibrate` — bins and thresholds |
 
-The four `<!-- MEDEXTRACT:*:START -->` blocks in the top-level README are
+The five `<!-- MEDEXTRACT:*:START -->` blocks in the top-level README are
 likewise rewritten by `readme_sync.sync_readme`.
