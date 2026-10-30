@@ -60,6 +60,7 @@ $Targets = [ordered]@{
     'format'      = 'Apply ruff formatting and autofixes'
     'test'        = 'Run the test suite'
     'cov'         = 'Test suite with coverage'
+    'audit'       = 'Known vulnerabilities in what the serving image installs'
     'train'       = 'One fine-tuning run'
     'sweep'       = 'The full nine-arm comparison sweep'
     'report'      = 'Regenerate the MLflow comparison table'
@@ -115,7 +116,7 @@ switch ($Target) {
         Invoke-Step -Exe $venvPy -Arguments @(
             '-m', 'pip', 'install',
             'transformers>=4.57,<6', 'datasets>=2.18', 'mlflow', 'accelerate',
-            'onnx', 'onnxruntime', 'qdrant-client', 'pytest', 'pytest-cov', 'ruff'
+            'onnx', 'onnxruntime', 'qdrant-client', 'pytest', 'pytest-cov', 'ruff', 'pip-audit'
         )
         Invoke-Step -Exe $venvPy -Arguments @('-m', 'pip', 'install', '-e', '.', '--no-deps')
     }
@@ -125,6 +126,7 @@ switch ($Target) {
     'format'      { Invoke-Py @('-m', 'ruff', 'check', '--fix', '.'); Invoke-Py @('-m', 'ruff', 'format', '.') }
     'test'        { Invoke-Py (@('-m', 'pytest', '-q') + $Rest) }
     'cov'         { Invoke-Py (@('-m', 'pytest', '-q', '--cov=medextract', '--cov-report=term-missing') + $Rest) }
+    'audit'       { Invoke-Py (@('-m', 'pip_audit', '-r', 'requirements-serve.txt', '--strict') + $Rest) }
 
     'train'       { Invoke-Py (@('-m', 'medextract.train') + $Rest) }
     'sweep'       { Invoke-Py (@('-m', 'medextract.sweep') + $Rest) }

@@ -30,6 +30,9 @@ test:  ## Run the test suite
 cov:  ## Test suite with coverage
 	pytest -q --cov=medextract --cov-report=term-missing
 
+audit:  ## Known vulnerabilities in what the serving image installs
+	pip-audit -r requirements-serve.txt --strict
+
 all:  ## The whole pipeline, unattended: sweep, export, benchmark, retrieval, serve, README
 	$(PY) -m medextract.pipeline
 

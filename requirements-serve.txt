@@ -12,7 +12,11 @@ numpy>=1.26,<3.0
 httpx>=0.27,<1.0
 onnxruntime>=1.17,<2.0
 tokenizers>=0.19,<1.0
-# transformers 5.x made every tokenizer report is_fast=True, breaking the
-# fast-tokenizer guard data.py relies on.
-transformers>=4.40,<5.0
+# The 5.x line. The 4.x line carries nine published advisories (PYSEC-2025-217,
+# PYSEC-2026-2288/2289/2290/3929/4174) whose fixes only exist in 5.x, and the
+# tokenizer this image needs behaves identically on both: byte-identical
+# input ids and offsets on every sentence of the NCBI-Disease test split and
+# every indexed abstract, checked before the pin moved. Floor is the first
+# release with all of those fixed. See docs/SECURITY.md#dependency-posture.
+transformers>=5.10,<6.0
 qdrant-client>=1.9,<2.0

@@ -5,8 +5,16 @@
 # them. The runtime stage carries onnxruntime rather than PyTorch, which is the
 # single biggest saving -- the torch wheel alone is larger than this whole image.
 
+# The base is pinned by digest, not by tag. A tag is a moving target: the same
+# `docker build` on two days can produce two different images and nobody can
+# see why from the repository. With the digest, a base-image change is a
+# visible commit. Refresh it deliberately with
+#   docker buildx imagetools inspect python:3.11-slim-bookworm
+# and paste the index digest here.
+ARG BASE_IMAGE=python:3.11-slim-bookworm@sha256:94a8fee35252d06ab75856f15f12c7bae67b10e8a6da93c7fded82b2610926cd
+
 # ---------- build stage ----------
-FROM python:3.11-slim-bookworm AS builder
+FROM ${BASE_IMAGE} AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -34,7 +42,7 @@ RUN find /opt/venv -name '__pycache__' -type d -prune -exec rm -rf {} + \
     && find /opt/venv -name '*.pyc' -delete
 
 # ---------- runtime stage ----------
-FROM python:3.11-slim-bookworm AS runtime
+FROM ${BASE_IMAGE} AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

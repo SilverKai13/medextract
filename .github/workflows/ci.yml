@@ -29,6 +29,11 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
+        # Both transformers lines are supported: 4.x is what the measurements
+        # in docs/ were produced on, 5.x is what the serving image ships. The
+        # suite has to pass on both or the split is a lie.
+        transformers: ["<5", ">=5.10,<6"]
+    name: test (py${{ matrix.python-version }}, transformers${{ matrix.transformers }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,24 +47,51 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          # transformers>=5 made every tokenizer report is_fast=True, which
-          # breaks the fast-tokenizer guard in data.py -- see pyproject.toml.
-          pip install -e ".[dev]" onnx onnxruntime "transformers<5" qdrant-client httpx
+          pip install -e ".[dev]" onnx onnxruntime qdrant-client httpx datasets "transformers${{ matrix.transformers }}"
+          python -c "import transformers; print('transformers', transformers.__version__)"
 
       - name: pytest
         run: pytest -q --cov=medextract --cov-report=term-missing
 
       - name: Upload coverage
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.11' && matrix.transformers == '<5'
         uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: .coverage
           if-no-files-found: ignore
 
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pip-audit
+
+      - name: Audit what the serving image installs
+        # Strict: a known vulnerability in a package the container ships fails
+        # the build. This is the dependency set that is actually exposed.
+        run: pip-audit -r requirements-serve.txt --strict --progress-spinner off
+
+      - name: Audit the training stack (advisory)
+        # The training environment is never deployed and runs offline on a
+        # developer's machine, so findings here are reported, not blocking.
+        # Which ones are currently accepted, and why, is in docs/SECURITY.md.
+        continue-on-error: true
+        run: |
+          python - <<'EOF' > /tmp/train-requirements.txt
+          import tomllib
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          for extra in ("train", "serve", "dev"):
+              print("\n".join(project["optional-dependencies"][extra]))
+          EOF
+          pip-audit -r /tmp/train-requirements.txt --progress-spinner off
+
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, audit]
     permissions:
       contents: read
       packages: write
@@ -93,6 +125,18 @@ jobs:
             echo "::error::image is ${MB} MB, over the 1500 MB budget"
             exit 1
           fi
+
+      - name: Scan the image
+        # OS packages and Python packages inside the built image, not just the
+        # requirements file. Unfixed findings are reported but cannot be acted
+        # on, so they do not fail the build; fixed HIGH/CRITICAL ones do.
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:ci
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
 
       - name: Smoke test the container
         # Starts with no model mounted, so this asserts the container comes up
