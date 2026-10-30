@@ -196,6 +196,39 @@ def build_retrieval_index(qdrant_url: str, abstracts_path: Path) -> int:
     return index_abstracts(client, settings.qdrant_collection, abstracts, embedder)
 
 
+def run_loadtest_stage(live_url: str, corpus_path: Path | None, requests_per_level: int) -> str:
+    """Drive the container that was just started and write the load-test tables.
+
+    Runs last, after the index is built and the API is up, because it needs a
+    server to point at. The in-process benchmark earlier in the run measures
+    the model; this measures what a caller sees.
+    """
+    import asyncio
+
+    import httpx
+
+    from medextract.export_onnx import PARITY_TEXTS
+    from medextract.loadtest import DEFAULT_LEVELS, run_loadtest, sample_corpus
+    from medextract.loadtest import to_markdown as loadtest_markdown
+
+    texts = sample_corpus(corpus_path, 64) if corpus_path else list(PARITY_TEXTS)
+
+    async def _run() -> dict[str, Any]:
+        pool = max(DEFAULT_LEVELS)
+        limits = httpx.Limits(max_connections=pool, max_keepalive_connections=pool)
+        async with httpx.AsyncClient(base_url=live_url, timeout=60.0, limits=limits) as client:
+            return await run_loadtest(client, texts, requests_per_level=requests_per_level)
+
+    results = asyncio.run(_run())
+    results["url"] = live_url
+    (REPO_ROOT / "docs" / "loadtest.json").write_text(
+        json.dumps(results, indent=2), encoding="utf-8"
+    )
+    table = loadtest_markdown(results)
+    (REPO_ROOT / "docs" / "loadtest.md").write_text(table + "\n", encoding="utf-8")
+    return table
+
+
 def status_text(*, corpus_size: int | None) -> str:
     corpus_note = f"a {corpus_size}-abstract PubMed index" if corpus_size else "no retrieval corpus"
     return (
@@ -205,7 +238,7 @@ def status_text(*, corpus_size: int | None) -> str:
     )
 
 
-def not_done_text(*, live_url: str | None) -> str:
+def not_done_text(*, live_url: str | None, loadtest_done: bool = False) -> str:
     """The honest inventory, generated rather than typed.
 
     Deliberately does not claim that everything remaining is a scope decision.
@@ -221,16 +254,22 @@ def not_done_text(*, live_url: str | None) -> str:
         )
     else:
         deployment = "no running service in this pass"
+    concurrency = (
+        "latency under concurrency measured against that container"
+        if loadtest_done
+        else "latency under concurrency not measured in this pass (no live server)"
+    )
     return (
         "Every phase has been run end to end on real data: training, ONNX export with "
-        f"a passing parity check, benchmarking, retrieval indexing, and {deployment}."
+        f"a passing parity check, benchmarking, retrieval indexing, {deployment}, and "
+        f"{concurrency}."
         "\n\n"
         "Two kinds of gap remain, and they are not the same kind. The ones under "
-        "[Limitations](#limitations) -- entity types, clinical-note performance, "
-        "negation, entity linking, relation extraction, corpus scale -- are scope "
-        "decisions. The ones in [docs/TODO.md](docs/TODO.md) are genuinely unfinished: "
-        "latency under concurrency is unmeasured, CI has no dependency vulnerability "
-        "scan, and the base image is pinned by tag rather than digest."
+        "[Limitations](#limitations) -- clinical-note performance, negation, entity "
+        "linking, relation extraction, corpus scale -- are scope decisions. The ones in "
+        "[docs/TODO.md](docs/TODO.md) are genuinely unfinished work for a next iteration: "
+        "there is no hosted deployment, no authentication or rate limiting in front of "
+        "the service, and no evaluation on clinical notes."
     )
 
 
@@ -247,6 +286,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pubmed-max", type=int, default=3000)
     p.add_argument("--no-docker", action="store_true")
     p.add_argument("--no-readme-update", action="store_true")
+    p.add_argument("--skip-loadtest", action="store_true")
+    p.add_argument("--loadtest-requests", type=int, default=200, help="per concurrency level")
     return p
 
 
@@ -323,6 +364,12 @@ def run_pipeline(argv: list[str] | None = None) -> int:
             "(reads MEDEXTRACT_QDRANT_URL from .env, already pointed at the local index)."
         )
 
+    loadtest_table: str | None = None
+    if live_url and not ns.skip_loadtest:
+        loadtest_table = run_loadtest_stage(
+            live_url, PUBMED_DUMP if PUBMED_DUMP.exists() else None, ns.loadtest_requests
+        )
+
     if not ns.no_readme_update:
         from medextract.readme_sync import sync_readme
 
@@ -331,7 +378,10 @@ def run_pipeline(argv: list[str] | None = None) -> int:
             sweep_table_md=sweep_table,
             benchmark_table_md=benchmark_table,
             status_text=status_text(corpus_size=corpus_size),
-            not_done_text=not_done_text(live_url=live_url),
+            not_done_text=not_done_text(
+                live_url=live_url, loadtest_done=loadtest_table is not None
+            ),
+            loadtest_table_md=loadtest_table,
         )
 
     val_f1 = best.get("validation", {}).get("eval_f1", float("nan"))

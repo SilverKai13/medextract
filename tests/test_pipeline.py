@@ -186,3 +186,20 @@ class TestMaybeFetchPubmed:
         monkeypatch.setattr("medextract.pipeline.fetch_pubmed_abstracts", lambda *a, **k: 5)
 
         assert maybe_fetch_pubmed("query", 10, out_path, force_fetch=True) == 5
+
+
+class TestNotDoneText:
+    def test_without_a_live_server_concurrency_is_reported_unmeasured(self):
+        from medextract.pipeline import not_done_text
+
+        text = not_done_text(live_url=None)
+        assert "no running service" in text
+        assert "not measured" in text
+
+    def test_with_a_load_test_the_measurement_is_claimed(self):
+        from medextract.pipeline import not_done_text
+
+        text = not_done_text(live_url="http://localhost:8000", loadtest_done=True)
+        assert "measured against that container" in text
+        assert "localhost:8000" in text
+        assert "not a hosted one" in text

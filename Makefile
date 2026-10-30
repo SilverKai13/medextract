@@ -5,6 +5,7 @@ PY ?= python3
 MODEL_DIR ?= artifacts/run/model
 ONNX_DIR ?= artifacts/onnx
 IMAGE ?= medextract:local
+API_URL ?= http://localhost:8000
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -47,6 +48,10 @@ export:  ## Export to ONNX and verify parity with PyTorch
 
 benchmark:  ## PyTorch vs ONNX latency table
 	$(PY) -m medextract.benchmark --torch-dir $(MODEL_DIR) --onnx-dir $(ONNX_DIR)
+
+loadtest:  ## Latency under concurrency against a running API (make up first)
+	$(PY) -m medextract.loadtest --url $(API_URL) --corpus data/pubmed.jsonl
+
 
 fetch:  ## Download PubMed abstracts
 	$(PY) -m medextract.retrieval.pubmed --max 3000

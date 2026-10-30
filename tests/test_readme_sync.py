@@ -115,3 +115,43 @@ class TestSyncReadme:
         for marker in ("STATUS", "SWEEP_TABLE", "BENCHMARK_TABLE", "NOT_DONE"):
             assert f"<!-- MEDEXTRACT:{marker}:START -->" in text
             assert f"<!-- MEDEXTRACT:{marker}:END -->" in text
+
+
+class TestOptionalLoadTestBlock:
+    def test_the_block_is_left_alone_when_no_table_is_given(self, tmp_path):
+        path = _write(tmp_path)
+        sync_readme(
+            path, sweep_table_md="x", benchmark_table_md="y", status_text="z", not_done_text="w"
+        )
+        assert "LOADTEST" not in path.read_text(encoding="utf-8")
+
+    def test_a_table_without_a_marker_fails_loudly(self, tmp_path):
+        path = _write(tmp_path)
+        with pytest.raises(ValueError, match="LOADTEST_TABLE"):
+            sync_readme(
+                path,
+                sweep_table_md="x",
+                benchmark_table_md="y",
+                status_text="z",
+                not_done_text="w",
+                loadtest_table_md="| load |",
+            )
+
+    def test_the_block_is_replaced_when_present(self, tmp_path):
+        content = SAMPLE_README.replace(
+            "## Licence",
+            "<!-- MEDEXTRACT:LOADTEST_TABLE:START -->\nold load\n"
+            "<!-- MEDEXTRACT:LOADTEST_TABLE:END -->\n\n## Licence",
+        )
+        path = _write(tmp_path, content)
+        sync_readme(
+            path,
+            sweep_table_md="x",
+            benchmark_table_md="y",
+            status_text="z",
+            not_done_text="w",
+            loadtest_table_md="| new load |",
+        )
+        text = path.read_text(encoding="utf-8")
+        assert "| new load |" in text
+        assert "old load" not in text

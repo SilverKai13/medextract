@@ -20,6 +20,7 @@ MARKERS = {
     "sweep_table": "SWEEP_TABLE",
     "benchmark_table": "BENCHMARK_TABLE",
     "not_done": "NOT_DONE",
+    "loadtest_table": "LOADTEST_TABLE",
 }
 
 
@@ -39,8 +40,14 @@ def sync_readme(
     benchmark_table_md: str,
     status_text: str,
     not_done_text: str,
+    loadtest_table_md: str | None = None,
 ) -> None:
-    """Rewrite the four marked blocks in place. Idempotent."""
+    """Rewrite the marked blocks in place. Idempotent.
+
+    The load-test block is optional because it needs a live server to produce,
+    which a pipeline run without Docker does not have; the other four are
+    always available by the time this is called.
+    """
     text = readme_path.read_text(encoding="utf-8")
     replacements = {
         MARKERS["status"]: status_text,
@@ -48,6 +55,8 @@ def sync_readme(
         MARKERS["benchmark_table"]: benchmark_table_md,
         MARKERS["not_done"]: not_done_text,
     }
+    if loadtest_table_md is not None:
+        replacements[MARKERS["loadtest_table"]] = loadtest_table_md
     for marker, replacement in replacements.items():
         text = _replace_block(text, marker, replacement.strip())
     readme_path.write_text(text, encoding="utf-8")

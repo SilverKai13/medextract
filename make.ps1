@@ -49,6 +49,7 @@ $env:PYTHONUTF8 = '1'
 $ModelDir = Join-Path $RepoRoot 'artifacts\run\model'
 $OnnxDir  = Join-Path $RepoRoot 'artifacts\onnx'
 $Image    = if ($env:MEDEXTRACT_IMAGE) { $env:MEDEXTRACT_IMAGE } else { 'medextract:local' }
+$ApiUrl   = if ($env:MEDEXTRACT_API_URL) { $env:MEDEXTRACT_API_URL } else { 'http://localhost:8000' }
 
 # Kept in declaration order so `help` reads as a workflow rather than an
 # alphabetical list.
@@ -64,6 +65,7 @@ $Targets = [ordered]@{
     'report'      = 'Regenerate the MLflow comparison table'
     'export'      = 'Export to ONNX, verify parity, export the query encoder'
     'benchmark'   = 'PyTorch vs ONNX latency table'
+    'loadtest'    = 'Latency under concurrency against a running API (up first)'
     'fetch'       = 'Download PubMed abstracts'
     'index'       = 'Embed and index the abstracts into Qdrant'
     'serve'       = 'Run the API locally with reload'
@@ -142,6 +144,7 @@ switch ($Target) {
     }
 
     'benchmark'   { Invoke-Py (@('-m', 'medextract.benchmark', '--torch-dir', $ModelDir, '--onnx-dir', $OnnxDir) + $Rest) }
+    'loadtest'    { Invoke-Py (@('-m', 'medextract.loadtest', '--url', $ApiUrl, '--corpus', 'data\pubmed.jsonl') + $Rest) }
     'fetch'       { Invoke-Py (@('-m', 'medextract.retrieval.pubmed', '--max', '3000') + $Rest) }
     'index'       { Invoke-Py (@('-m', 'medextract.retrieval.build_index') + $Rest) }
     'serve'       { Invoke-Py @('-m', 'uvicorn', 'medextract.api.main:app', '--reload', '--port', '8000') }
