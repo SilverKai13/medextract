@@ -132,7 +132,7 @@ jobs:
         # OS packages and Python packages inside the built image, not just the
         # requirements file. Unfixed findings are reported but cannot be acted
         # on, so they do not fail the build; fixed HIGH/CRITICAL ones do.
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:ci
           format: table
