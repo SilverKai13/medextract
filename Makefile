@@ -1,5 +1,5 @@
-.PHONY: help install install-train lint format test cov train sweep export benchmark report \
-        fetch index serve docker docker-size up down clean all
+.PHONY: help install install-train lint format test cov audit train sweep export benchmark \
+        loadtest calibrate report fetch index serve docker docker-size up down clean all
 
 PY ?= python3
 MODEL_DIR ?= artifacts/run/model
@@ -52,6 +52,8 @@ benchmark:  ## PyTorch vs ONNX latency table
 loadtest:  ## Latency under concurrency against a running API (make up first)
 	$(PY) -m medextract.loadtest --url $(API_URL) --corpus data/pubmed.jsonl
 
+calibrate:  ## Reliability of the entity score on the validation split
+	$(PY) -m medextract.calibration --model-dir $(ONNX_DIR)
 
 fetch:  ## Download PubMed abstracts
 	$(PY) -m medextract.retrieval.pubmed --max 3000

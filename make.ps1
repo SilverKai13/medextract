@@ -66,6 +66,7 @@ $Targets = [ordered]@{
     'export'      = 'Export to ONNX, verify parity, export the query encoder'
     'benchmark'   = 'PyTorch vs ONNX latency table'
     'loadtest'    = 'Latency under concurrency against a running API (up first)'
+    'calibrate'   = 'Reliability of the entity score on the validation split'
     'fetch'       = 'Download PubMed abstracts'
     'index'       = 'Embed and index the abstracts into Qdrant'
     'serve'       = 'Run the API locally with reload'
@@ -145,6 +146,7 @@ switch ($Target) {
 
     'benchmark'   { Invoke-Py (@('-m', 'medextract.benchmark', '--torch-dir', $ModelDir, '--onnx-dir', $OnnxDir) + $Rest) }
     'loadtest'    { Invoke-Py (@('-m', 'medextract.loadtest', '--url', $ApiUrl, '--corpus', 'data\pubmed.jsonl') + $Rest) }
+    'calibrate'   { Invoke-Py (@('-m', 'medextract.calibration', '--model-dir', $OnnxDir) + $Rest) }
     'fetch'       { Invoke-Py (@('-m', 'medextract.retrieval.pubmed', '--max', '3000') + $Rest) }
     'index'       { Invoke-Py (@('-m', 'medextract.retrieval.build_index') + $Rest) }
     'serve'       { Invoke-Py @('-m', 'uvicorn', 'medextract.api.main:app', '--reload', '--port', '8000') }

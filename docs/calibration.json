@@ -1,0 +1,89 @@
+{
+  "n_predictions": 817,
+  "n_correct": 702,
+  "overall_precision": 0.8592,
+  "mean_score": 0.9715,
+  "ece": 0.1123,
+  "bins": [
+    {
+      "bin": "0.5-0.6",
+      "count": 8,
+      "mean_score": 0.5631,
+      "precision": 0.125,
+      "gap": -0.4381
+    },
+    {
+      "bin": "0.6-0.7",
+      "count": 15,
+      "mean_score": 0.6589,
+      "precision": 0.4,
+      "gap": -0.2589
+    },
+    {
+      "bin": "0.7-0.8",
+      "count": 20,
+      "mean_score": 0.7468,
+      "precision": 0.2,
+      "gap": -0.5468
+    },
+    {
+      "bin": "0.8-0.9",
+      "count": 32,
+      "mean_score": 0.8657,
+      "precision": 0.5625,
+      "gap": -0.3032
+    },
+    {
+      "bin": "0.9-1.0",
+      "count": 742,
+      "mean_score": 0.9928,
+      "precision": 0.907,
+      "gap": -0.0858
+    }
+  ],
+  "model_dir": "artifacts\\onnx",
+  "backend": "onnx",
+  "dataset": "ncbi_disease",
+  "split": "validation",
+  "corpus_source": "direct-download",
+  "n_sentences": 923,
+  "n_gold": 787,
+  "thresholds": [
+    {
+      "min_score": 0.5,
+      "kept": 817,
+      "precision": 0.8592,
+      "recall": 0.892
+    },
+    {
+      "min_score": 0.7,
+      "kept": 794,
+      "precision": 0.8753,
+      "recall": 0.8831
+    },
+    {
+      "min_score": 0.8,
+      "kept": 774,
+      "precision": 0.8928,
+      "recall": 0.878
+    },
+    {
+      "min_score": 0.9,
+      "kept": 742,
+      "precision": 0.907,
+      "recall": 0.8551
+    },
+    {
+      "min_score": 0.95,
+      "kept": 716,
+      "precision": 0.9176,
+      "recall": 0.8348
+    },
+    {
+      "min_score": 0.99,
+      "kept": 632,
+      "precision": 0.9383,
+      "recall": 0.7535
+    }
+  ]
+}
