@@ -65,6 +65,17 @@ def default_grid(base: RunConfig) -> list[RunConfig]:
     return arms
 
 
+def suffix_arms(arms: list[RunConfig], keep_types: tuple[str, ...]) -> list[RunConfig]:
+    """Name restricted arms after their types.
+
+    So a Disease-only arm and the combined arm it is compared with can live in
+    one experiment without colliding on run name, and the table says which is
+    which without a reader having to open the params.
+    """
+    suffix = "_" + "+".join(t.lower() for t in keep_types)
+    return [replace(a, run_name=f"{a.run_name}{suffix}") for a in arms]
+
+
 def cuda_is_available() -> bool:
     try:
         import torch
@@ -146,6 +157,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-fp16", dest="fp16", action="store_false")
     p.add_argument("--keep-checkpoints", action="store_true")
     p.add_argument(
+        "--keep-types",
+        nargs="+",
+        default=None,
+        metavar="TYPE",
+        help="restrict every arm to these entity types; run names get a suffix",
+    )
+    p.add_argument(
         "--only",
         nargs="*",
         default=None,
@@ -161,12 +179,14 @@ def main(argv: list[str] | None = None) -> int:
     fp16 = cuda_is_available() if ns.fp16 is None else ns.fp16
     log.info("mixed precision: %s", "on" if fp16 else "off")
 
+    keep_types = tuple(ns.keep_types) if ns.keep_types else None
     base = RunConfig(
         base_model=ns.base_model,
         dataset=ns.dataset,
         fp16=fp16,
         max_per_device_batch=ns.max_per_device_batch,
         keep_checkpoints=ns.keep_checkpoints,
+        keep_types=keep_types,
     )
     arms = default_grid(base)
     if ns.only:
@@ -174,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         arms = [a for a in arms if a.run_name in wanted]
         if not arms:
             raise SystemExit(f"No arms matched {sorted(wanted)}")
+    if keep_types:
+        arms = suffix_arms(arms, keep_types)
 
     results = run_sweep(arms, ns.output_root, ns.experiment)
     print(json.dumps(results, indent=2))

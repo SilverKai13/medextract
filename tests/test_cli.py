@@ -181,3 +181,111 @@ class TestPubMedParser:
         ns = pubmed_parser().parse_args(["--max", "50", "--out", "/tmp/a.jsonl"])
         assert ns.max_results == 50
         assert ns.out == Path("/tmp/a.jsonl")
+
+
+class TestPerTypeReport:
+    def test_single_type_experiments_get_no_extra_columns(self):
+        from medextract.report import per_type_columns
+
+        assert per_type_columns(["metrics.eval_f1", "metrics.eval_Disease_f1"]) == []
+
+    def test_the_macro_aggregate_is_not_mistaken_for_a_type(self):
+        from medextract.report import per_type_columns
+
+        logged = ["metrics.eval_f1", "metrics.eval_Disease_f1", "metrics.eval_macro_f1"]
+        assert per_type_columns(logged) == []
+
+    def test_two_types_get_validation_and_test_columns(self):
+        from medextract.report import per_type_columns
+
+        columns = per_type_columns(
+            [
+                "metrics.eval_f1",
+                "metrics.eval_Disease_f1",
+                "metrics.eval_Chemical_f1",
+                "metrics.test_Chemical_f1",
+                "metrics.test_Disease_f1",
+            ]
+        )
+        assert [header for _, header in columns] == [
+            "val F1 Chemical",
+            "val F1 Disease",
+            "test F1 Chemical",
+            "test F1 Disease",
+        ]
+
+    def test_rendered_table_adds_type_and_restriction_columns(self):
+        pandas = pytest.importorskip("pandas")
+
+        from medextract.report import render_table
+
+        runs = pandas.DataFrame(
+            [
+                {
+                    "tags.mlflow.runName": "combined",
+                    "params.base_model": "x/biobert",
+                    "params.learning_rate": "3e-05",
+                    "params.batch_size": "16",
+                    "params.epochs": "3",
+                    "params.seed": "42",
+                    "params.label_all_subwords": "False",
+                    "params.keep_types": "all",
+                    "metrics.eval_precision": 0.9,
+                    "metrics.eval_recall": 0.8,
+                    "metrics.eval_f1": 0.85,
+                    "metrics.test_f1": 0.84,
+                    "metrics.eval_Disease_f1": 0.82,
+                    "metrics.eval_Chemical_f1": 0.91,
+                    "metrics.test_Disease_f1": 0.81,
+                    "metrics.test_Chemical_f1": 0.9,
+                },
+                {
+                    "tags.mlflow.runName": "combined_disease",
+                    "params.base_model": "x/biobert",
+                    "params.learning_rate": "3e-05",
+                    "params.batch_size": "16",
+                    "params.epochs": "3",
+                    "params.seed": "42",
+                    "params.label_all_subwords": "False",
+                    "params.keep_types": "Disease",
+                    "metrics.eval_precision": 0.9,
+                    "metrics.eval_recall": 0.8,
+                    "metrics.eval_f1": 0.83,
+                    "metrics.test_f1": 0.82,
+                    "metrics.eval_Disease_f1": 0.83,
+                    "metrics.eval_Chemical_f1": float("nan"),
+                    "metrics.test_Disease_f1": 0.82,
+                    "metrics.test_Chemical_f1": float("nan"),
+                },
+            ]
+        )
+        table = render_table(runs)
+        header = table.splitlines()[0]
+        assert "| types |" in header
+        assert "| val F1 Chemical |" in header
+        assert "| test F1 Disease |" in header
+        assert "| combined_disease | biobert |" in table
+        assert "| Disease |" in table
+        assert " - |" in table  # the NaN chemical score of the Disease-only arm
+
+
+class TestKeepTypes:
+    def test_train_flag_reaches_the_run_config(self):
+        from medextract.train import build_parser
+
+        ns = build_parser().parse_args(["--keep-types", "Disease", "Chemical"])
+        assert ns.keep_types == ["Disease", "Chemical"]
+
+    def test_sweep_flag_is_optional(self):
+        from medextract.sweep import build_parser
+
+        assert build_parser().parse_args([]).keep_types is None
+        assert build_parser().parse_args(["--keep-types", "Disease"]).keep_types == ["Disease"]
+
+    def test_restricted_arms_are_renamed_after_their_types(self):
+        from medextract.sweep import default_grid, suffix_arms
+        from medextract.train import RunConfig
+
+        arms = suffix_arms(default_grid(RunConfig()), ("Disease",))
+        assert all(arm.run_name.endswith("_disease") for arm in arms)
+        assert len({arm.run_name for arm in arms}) == len(arms)

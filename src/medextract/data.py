@@ -313,6 +313,48 @@ def build_tokenize_fn(
     return tokenize_and_align
 
 
+def restrict_types(
+    raw: DatasetDict, spec: DatasetSpec, label_names: list[str], keep_types: tuple[str, ...]
+) -> tuple[DatasetDict, list[str]]:
+    """Keep only some entity types, relabelling every other mention as `O`.
+
+    This is how a single-type model is trained on a multi-type corpus so it
+    can be compared with the combined model on exactly the same sentences:
+    the question "does chemical supervision help or hurt disease F1?" is only
+    answerable when the two differ in nothing but the labels.
+
+    Tags come back as strings in the reduced label space; `build_tokenize_fn`
+    accepts either strings or ints, so nothing downstream changes.
+    """
+    present = {name.split("-", 1)[1] for name in label_names if "-" in name}
+    missing = set(keep_types) - present
+    if missing:
+        raise ValueError(
+            f"{spec.hf_id} has no entity type(s) {sorted(missing)}; it annotates {sorted(present)}."
+        )
+
+    kept = ["O"] + [
+        name for name in label_names if "-" in name and name.split("-", 1)[1] in keep_types
+    ]
+
+    def relabel(batch: dict[str, list]) -> dict[str, list]:
+        rows = []
+        for tags in batch[spec.tags_column]:
+            names = [label_names[t] if isinstance(t, int) else t for t in tags]
+            rows.append([name if name in kept else "O" for name in names])
+        return {spec.tags_column: rows}
+
+    # Without an explicit feature type, map() encodes the returned strings
+    # through the column's existing ClassLabel -- back into the *original*
+    # integer space, silently -- so the type is declared as plain strings.
+    from datasets import Sequence, Value
+
+    features = next(iter(raw.values())).features.copy()
+    features[spec.tags_column] = Sequence(Value("string"))
+    reduced = raw.map(relabel, batched=True, features=features, desc="restricting")
+    return reduced, kept
+
+
 def prepare(
     tokenizer: PreTrainedTokenizerFast,
     dataset_key: str = "ncbi_disease",
@@ -320,9 +362,13 @@ def prepare(
     max_length: int = 256,
     label_all_subwords: bool = False,
     cache_dir: str | None = None,
+    keep_types: tuple[str, ...] | None = None,
 ) -> PreparedData:
     raw, spec, source = load_corpus(dataset_key, cache_dir=cache_dir)
     label_names = resolve_label_names(raw, spec)
+    if keep_types:
+        raw, label_names = restrict_types(raw, spec, label_names, tuple(keep_types))
+        source = f"{source}, types={','.join(keep_types)}"
     label2id, id2label = build_label_maps(label_names)
 
     tokenize_fn = build_tokenize_fn(

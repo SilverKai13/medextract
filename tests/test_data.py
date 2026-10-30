@@ -144,3 +144,67 @@ class TestLabelResolution:
 def test_known_datasets_are_registered():
     assert {"ncbi_disease", "bc5cdr"} <= set(DATASETS)
     assert DATASETS["bc5cdr"].label_names is not None
+
+
+class TestTypeRestriction:
+    """Training a single-type model on a multi-type corpus, for the comparison."""
+
+    @staticmethod
+    def _two_type_corpus():
+        datasets = pytest.importorskip("datasets")
+        names = ["O", "B-Chemical", "B-Disease", "I-Disease", "I-Chemical"]
+        features = datasets.Features(
+            {
+                "tokens": datasets.Sequence(datasets.Value("string")),
+                "tags": datasets.Sequence(datasets.ClassLabel(names=names)),
+            }
+        )
+        train = datasets.Dataset.from_dict(
+            {
+                "tokens": [["cisplatin", "caused", "renal", "failure"], ["no", "change"]],
+                "tags": [[1, 0, 2, 3], [0, 0]],
+            },
+            features=features,
+        )
+        return datasets.DatasetDict({"train": train}), names
+
+    def test_other_types_become_outside_and_the_label_set_shrinks(self):
+        from medextract.data import restrict_types
+
+        raw, names = self._two_type_corpus()
+        spec = DatasetSpec(hf_id="x", tags_column="tags")
+        reduced, kept = restrict_types(raw, spec, names, ("Disease",))
+        assert kept == ["O", "B-Disease", "I-Disease"]
+        assert reduced["train"][0]["tags"] == ["O", "O", "B-Disease", "I-Disease"]
+        assert reduced["train"][1]["tags"] == ["O", "O"]
+        assert reduced["train"][0]["tokens"] == ["cisplatin", "caused", "renal", "failure"]
+
+    def test_keeping_the_other_type_keeps_the_other_mentions(self):
+        from medextract.data import restrict_types
+
+        raw, names = self._two_type_corpus()
+        spec = DatasetSpec(hf_id="x", tags_column="tags")
+        reduced, kept = restrict_types(raw, spec, names, ("Chemical",))
+        assert kept == ["O", "B-Chemical", "I-Chemical"]
+        assert reduced["train"][0]["tags"] == ["B-Chemical", "O", "O", "O"]
+
+    def test_a_type_the_corpus_does_not_annotate_is_rejected(self):
+        from medextract.data import restrict_types
+
+        raw, names = self._two_type_corpus()
+        spec = DatasetSpec(hf_id="x", tags_column="tags")
+        with pytest.raises(ValueError, match="no entity type"):
+            restrict_types(raw, spec, names, ("Gene",))
+
+    def test_restricted_tags_align_through_the_normal_path(self, tiny_tokenizer):
+        """String tags in the reduced space go through build_tokenize_fn unchanged."""
+        from medextract.data import restrict_types
+
+        raw, names = self._two_type_corpus()
+        spec = DatasetSpec(hf_id="x", tags_column="tags")
+        reduced, kept = restrict_types(raw, spec, names, ("Disease",))
+        tokenize = build_tokenize_fn(tiny_tokenizer, spec, kept)
+        batch = tokenize(reduced["train"][:])
+        label_ids = {label for row in batch["labels"] for label in row if label != -100}
+        assert label_ids <= set(range(len(kept)))
+        assert len(kept) - 1 in label_ids  # I-Disease was kept and aligned

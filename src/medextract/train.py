@@ -54,6 +54,9 @@ class RunConfig:
     max_length: int = 256
     seed: int = 42
     label_all_subwords: bool = False
+    # Restrict a multi-type corpus to these entity types, everything else
+    # becoming O. None means every type the corpus annotates.
+    keep_types: tuple[str, ...] | None = None
     fp16: bool = False
     # How many examples actually go through the device at once. 16 fits
     # BERT-base at 256 tokens on a 4GB card with fp16; larger cards can raise
@@ -107,6 +110,7 @@ def train(config: RunConfig, output_dir: Path, *, experiment: str = DEFAULT_EXPE
         config.dataset,
         max_length=config.max_length,
         label_all_subwords=config.label_all_subwords,
+        keep_types=config.keep_types,
     )
 
     model = AutoModelForTokenClassification.from_pretrained(
@@ -161,7 +165,14 @@ def train(config: RunConfig, output_dir: Path, *, experiment: str = DEFAULT_EXPE
     mlflow.set_experiment(experiment)
 
     with mlflow.start_run(run_name=config.run_name):
-        mlflow.log_params(asdict(config))
+        mlflow.log_params(
+            {
+                **asdict(config),
+                # A tuple logs as its repr; a comma-joined string reads better
+                # in the table and is what report.py expects.
+                "keep_types": ",".join(config.keep_types) if config.keep_types else "all",
+            }
+        )
         mlflow.log_params(
             {
                 "num_labels": len(prepared.label_names),
@@ -249,6 +260,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-length", type=int, default=256)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--label-all-subwords", action="store_true")
+    p.add_argument(
+        "--keep-types",
+        nargs="+",
+        default=None,
+        metavar="TYPE",
+        help="train on these entity types only (e.g. Disease); others become O",
+    )
     p.add_argument("--fp16", action="store_true")
     p.add_argument("--keep-checkpoints", action="store_true")
     p.add_argument("--log-model-artifact", action="store_true")
@@ -273,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         max_length=ns.max_length,
         seed=ns.seed,
         label_all_subwords=ns.label_all_subwords,
+        keep_types=tuple(ns.keep_types) if ns.keep_types else None,
         fp16=ns.fp16,
         keep_checkpoints=ns.keep_checkpoints,
         log_model_artifact=ns.log_model_artifact,
