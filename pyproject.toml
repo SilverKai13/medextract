@@ -23,10 +23,12 @@ dependencies = [
 [project.optional-dependencies]
 train = [
     "torch>=2.2",
-    # transformers 5.x made every tokenizer report is_fast=True, including
-    # plain-Python BertTokenizer, which breaks the fast-tokenizer guard in
-    # data.py that the word-level label alignment depends on.
-    "transformers>=4.40,<5",
+    # Both transformers lines work. The tokenizer guard checks for word_ids()
+    # and an offset mapping directly rather than trusting is_fast, and the
+    # ONNX exporter hands 5.x a prepared attention mask its tracer-unfriendly
+    # mask builder returns untouched. The serving image pins the 5.x line in
+    # requirements-serve.txt; see docs/SECURITY.md for why.
+    "transformers>=4.40,<6",
     "datasets>=2.18",
     "accelerate>=0.29",
     "mlflow>=2.12",
@@ -35,7 +37,7 @@ train = [
 serve = [
     "onnxruntime>=1.17",
     "tokenizers>=0.19",
-    "transformers>=4.40,<5",
+    "transformers>=4.40,<6",
     "qdrant-client>=1.9",
     "sentence-transformers>=2.7",
 ]

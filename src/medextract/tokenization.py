@@ -38,6 +38,42 @@ CASING_PROBE = "Familial APC BRCA1 EGFR Adenomatous"
 CASED_VOCAB_THRESHOLD = 0.01
 
 
+def supports_word_alignment(tokenizer) -> bool:
+    """Whether the tokenizer can map subwords back to words and to characters.
+
+    Decided by trying it rather than by reading `is_fast`. The flag was a
+    reliable proxy while transformers shipped a pure-Python implementation
+    beside the Rust one; from 5.x every tokenizer is Rust-backed and reports
+    `is_fast=True`, so a guard written against the flag either never fires or
+    has to be pinned to a library version. Asking for `word_ids()` and an
+    offset mapping on a probe is the actual requirement, and it holds or fails
+    the same way on every version.
+    """
+    try:
+        encoded = tokenizer(
+            ["probe", "word"],
+            is_split_into_words=True,
+            add_special_tokens=False,
+            return_offsets_mapping=True,
+        )
+        encoded.word_ids(batch_index=0)
+        encoded["offset_mapping"]
+    except (NotImplementedError, TypeError, ValueError, AttributeError, KeyError):
+        return False
+    return True
+
+
+def require_word_alignment(tokenizer, *, purpose: str) -> None:
+    """Raise with an actionable message when the tokenizer cannot do `purpose`."""
+    if not supports_word_alignment(tokenizer):
+        raise ValueError(
+            f"A fast tokenizer is required for {purpose}: this one cannot report "
+            "word_ids() or an offset mapping. Load with "
+            "AutoTokenizer.from_pretrained(..., use_fast=True), or convert the "
+            "checkpoint's vocabulary to a `tokenizers`-backed tokenizer."
+        )
+
+
 def vocabulary_is_cased(tokenizer) -> bool:
     """True when the vocabulary itself contains uppercase word pieces.
 
@@ -85,14 +121,9 @@ def load_fast_tokenizer(model_name_or_path: str | Path, **kwargs):
     name = str(model_name_or_path)
     tokenizer = AutoTokenizer.from_pretrained(name, use_fast=True, **kwargs)
 
-    if not tokenizer.is_fast:
-        # word_ids() and offset_mapping both come from the fast implementation;
-        # without them neither label alignment nor character spans are possible.
-        raise ValueError(
-            f"{name} did not load a fast tokenizer. Label alignment needs word_ids() "
-            "and character spans need offset mapping, neither of which the Python "
-            "implementation provides."
-        )
+    # word_ids() and offset_mapping are both needed downstream; without them
+    # neither label alignment nor character spans are possible.
+    require_word_alignment(tokenizer, purpose=f"label alignment ({name})")
 
     cased = vocabulary_is_cased(tokenizer)
     lowercasing = bool(getattr(tokenizer, "do_lower_case", False))

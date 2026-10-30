@@ -83,20 +83,37 @@ def _write_vocab(path):
     path.write_text("\n".join(seen) + "\n", encoding="utf-8")
 
 
+def bert_tokenizer_from_vocab(vocab_path, **kwargs):
+    """Build a WordPiece tokenizer from a vocab file on either transformers line.
+
+    4.x spells the argument `vocab_file`; 5.x renamed it to `vocab` and
+    silently ignores the old name -- the result is a five-token tokenizer that
+    turns everything into [UNK], which is the kind of failure that passes a
+    "did it construct?" check. Reading the signature is the version-agnostic
+    way to pick the right name.
+    """
+    import inspect
+
+    from transformers import BertTokenizerFast
+
+    parameters = inspect.signature(BertTokenizerFast.__init__).parameters
+    key = "vocab_file" if "vocab_file" in parameters else "vocab"
+    tokenizer = BertTokenizerFast(**{key: str(vocab_path)}, **kwargs)
+    if len(tokenizer.get_vocab()) <= 5:
+        raise RuntimeError("vocabulary was not read; the constructor argument name is wrong")
+    return tokenizer
+
+
 @pytest.fixture(scope="session")
 def tiny_model_dir(tmp_path_factory):
     """A saved token-classification model directory, built offline."""
-    from transformers import (
-        AutoModelForTokenClassification,
-        BertConfig,
-        BertTokenizerFast,
-    )
+    from transformers import AutoModelForTokenClassification, BertConfig
 
     model_dir = tmp_path_factory.mktemp("tiny-model")
     _write_vocab(model_dir / "vocab.txt")
 
-    tokenizer = BertTokenizerFast(
-        vocab_file=str(model_dir / "vocab.txt"),
+    tokenizer = bert_tokenizer_from_vocab(
+        model_dir / "vocab.txt",
         do_lower_case=True,
         model_max_length=256,
     )
@@ -116,6 +133,12 @@ def tiny_model_dir(tmp_path_factory):
     model = AutoModelForTokenClassification.from_config(config)
     model.save_pretrained(str(model_dir))
     return model_dir
+
+
+@pytest.fixture
+def make_bert_tokenizer():
+    """The version-agnostic constructor, for tests that build their own vocabularies."""
+    return bert_tokenizer_from_vocab
 
 
 @pytest.fixture(scope="session")

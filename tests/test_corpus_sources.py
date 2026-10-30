@@ -151,9 +151,9 @@ class TestCorpusFallback:
 
 
 class TestTokenizerCasing:
-    def test_a_cased_vocabulary_is_detected_from_the_vocabulary(self, tiny_model_dir, tmp_path):
-        from transformers import BertTokenizerFast
-
+    def test_a_cased_vocabulary_is_detected_from_the_vocabulary(
+        self, make_bert_tokenizer, tmp_path
+    ):
         from medextract.tokenization import vocabulary_is_cased
 
         cased_vocab = tmp_path / "vocab.txt"
@@ -161,7 +161,7 @@ class TestTokenizerCasing:
             "\n".join(["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "APC", "BRCA", "Aden", "the"]),
             encoding="utf-8",
         )
-        assert vocabulary_is_cased(BertTokenizerFast(vocab_file=str(cased_vocab)))
+        assert vocabulary_is_cased(make_bert_tokenizer(cased_vocab))
 
     def test_an_uncased_vocabulary_is_left_alone(self, tiny_tokenizer):
         """The stub vocabulary is all lowercase; nothing should be 'fixed'."""
@@ -175,14 +175,12 @@ class TestTokenizerCasing:
         tokenizer = load_fast_tokenizer(tiny_model_dir)
         assert tokenizer.is_fast
 
-    def test_a_cased_checkpoint_is_not_lowercased(self, tmp_path):
+    def test_a_cased_checkpoint_is_not_lowercased(self, make_bert_tokenizer, tmp_path):
         """The BioBERT failure mode, reproduced on a checkpoint we control.
 
         Saved without a tokenizer_config.json, exactly as BioBERT ships, so
         AutoTokenizer has to invent do_lower_case and gets it wrong.
         """
-        from transformers import BertTokenizerFast
-
         from medextract.tokenization import load_fast_tokenizer
 
         vocab = tmp_path / "vocab.txt"
@@ -196,8 +194,12 @@ class TestTokenizerCasing:
             ),
             encoding="utf-8",
         )
-        BertTokenizerFast(vocab_file=str(vocab), do_lower_case=True).save_pretrained(str(tmp_path))
+        make_bert_tokenizer(vocab, do_lower_case=True).save_pretrained(str(tmp_path))
         (tmp_path / "tokenizer_config.json").unlink()
+        # 5.x also writes the backend's tokenizer.json, which carries the
+        # lowercasing normaliser with it. BioBERT ships neither file -- only
+        # vocab.txt -- so remove it too to reproduce that shape faithfully.
+        (tmp_path / "tokenizer.json").unlink(missing_ok=True)
         # config.json without a tokenizer_config.json is precisely the shape
         # BioBERT ships in, and it is what makes AutoTokenizer guess.
         (tmp_path / "config.json").write_text(

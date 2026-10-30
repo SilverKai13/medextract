@@ -82,12 +82,43 @@ def test_truncation_does_not_desynchronise_labels(tiny_tokenizer):
     assert len(encoded["input_ids"][0]) == len(encoded["labels"][0]) <= 8
 
 
-def test_slow_tokenizer_is_rejected_with_an_explanation(tiny_model_dir):
-    from transformers import BertTokenizer
+class _TokenizerWithoutAlignment:
+    """What a pure-Python tokenizer looks like to the alignment code.
 
-    slow = BertTokenizer(vocab_file=str(tiny_model_dir / "vocab.txt"))
+    transformers 4.x ships one of these as `BertTokenizer`; 5.x ships none, so
+    the guard is exercised against the behaviour itself -- no `word_ids()`,
+    no offset mapping -- rather than against a class that may not exist.
+    """
+
+    is_fast = False
+
+    def __call__(self, *args, **kwargs):
+        if kwargs.get("return_offsets_mapping"):
+            raise NotImplementedError("return_offset_mapping is not available")
+
+        class _Encoding(dict):
+            def word_ids(self, batch_index=0):
+                raise ValueError("word_ids() is not available when using Python tokenizers")
+
+        return _Encoding(input_ids=[[1, 2]])
+
+
+def test_tokenizer_without_word_alignment_is_rejected_with_an_explanation():
     with pytest.raises(ValueError, match="fast tokenizer"):
-        build_tokenize_fn(slow, SPEC, LABEL_NAMES)
+        build_tokenize_fn(_TokenizerWithoutAlignment(), SPEC, LABEL_NAMES)
+
+
+def test_the_guard_is_decided_by_capability_not_by_the_is_fast_flag(tiny_tokenizer):
+    """A tokenizer that can align must pass whatever its flag says, and vice versa."""
+    from medextract.tokenization import supports_word_alignment
+
+    assert supports_word_alignment(tiny_tokenizer)
+    assert not supports_word_alignment(_TokenizerWithoutAlignment())
+
+    class _LyingFlag(_TokenizerWithoutAlignment):
+        is_fast = True
+
+    assert not supports_word_alignment(_LyingFlag())
 
 
 class TestLabelResolution:

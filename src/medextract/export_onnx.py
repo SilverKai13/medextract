@@ -62,6 +62,29 @@ def _copy_sidecar_files(model_dir: Path, output_dir: Path) -> None:
             shutil.copy(source, output_dir / name)
 
 
+def _needs_prepared_mask() -> bool:
+    """transformers 5 builds attention masks in a way the TorchScript tracer cannot follow.
+
+    Its mask utilities read the shape of a position tensor that is a scalar
+    under tracing, and the export dies with an IndexError inside `sdpa_mask`.
+    The same utilities return a mask untouched when it already has the
+    prepared 4-D shape, so on 5.x the wrapper builds that mask itself from the
+    padding mask. 4.x still takes the 2-D mask, as it always has.
+    """
+    import transformers
+
+    return int(transformers.__version__.split(".")[0]) >= 5
+
+
+def _prepared_4d_mask(attention_mask, sequence_length: int):
+    """The additive float mask BERT has always used internally: 0 to attend, -inf to ignore."""
+    import torch
+
+    mask = attention_mask[:, None, None, :].to(torch.float32)
+    mask = (1.0 - mask) * torch.finfo(torch.float32).min
+    return mask.expand(-1, 1, sequence_length, -1)
+
+
 def export_with_torch(model_dir: Path, output_dir: Path, *, opset: int = DEFAULT_OPSET) -> Path:
     """Export via torch.onnx.export.
 
@@ -83,6 +106,8 @@ def export_with_torch(model_dir: Path, output_dir: Path, *, opset: int = DEFAULT
     if takes_token_type_ids:
         input_names.append("token_type_ids")
 
+    prepare_mask = _needs_prepared_mask()
+
     class LogitsOnly(torch.nn.Module):
         """Unwrap the ModelOutput so the graph has one clean output tensor."""
 
@@ -91,6 +116,8 @@ def export_with_torch(model_dir: Path, output_dir: Path, *, opset: int = DEFAULT
             self.inner = inner
 
         def forward(self, input_ids, attention_mask, token_type_ids=None):
+            if prepare_mask:
+                attention_mask = _prepared_4d_mask(attention_mask, input_ids.shape[1])
             kwargs = {"input_ids": input_ids, "attention_mask": attention_mask}
             if token_type_ids is not None:
                 kwargs["token_type_ids"] = token_type_ids

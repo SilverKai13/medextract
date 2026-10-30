@@ -211,6 +211,8 @@ class NerEngine:
     ) -> None:
         from transformers import AutoTokenizer
 
+        from medextract.tokenization import require_word_alignment
+
         self.model_dir = Path(model_dir)
         if not self.model_dir.exists():
             raise FileNotFoundError(
@@ -222,8 +224,7 @@ class NerEngine:
         self.stride = stride
 
         self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_dir), use_fast=True)
-        if not self.tokenizer.is_fast:
-            raise ValueError("A fast tokenizer is required (offset mapping is used for spans).")
+        require_word_alignment(self.tokenizer, purpose="character spans")
         self.id2label = _load_id2label(self.model_dir)
 
         self.loaded_at = time.time()

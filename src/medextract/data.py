@@ -282,15 +282,12 @@ def build_tokenize_fn(
     label_all_subwords: bool = False,
 ):
     """Return a batched map() function producing input_ids/attention_mask/labels."""
+    from medextract.tokenization import require_word_alignment
+
     label2id, _ = build_label_maps(label_names)
 
-    if not tokenizer.is_fast:
-        # word_ids() only exists on the fast tokenisers; without it there is no
-        # reliable way to map word labels onto subwords.
-        raise ValueError(
-            "A fast tokenizer is required for label alignment. Load with "
-            "AutoTokenizer.from_pretrained(..., use_fast=True)."
-        )
+    # word_ids() is the only reliable way to map word labels onto subwords.
+    require_word_alignment(tokenizer, purpose="label alignment")
 
     def tokenize_and_align(batch: dict[str, list]) -> dict[str, list]:
         encoded = tokenizer(

@@ -105,14 +105,13 @@ switch ($Target) {
         # --system-site-packages so an existing CUDA torch build is reused
         # rather than re-downloading roughly 2.5GB of wheels. Packages
         # installed into the venv still take precedence over the system ones,
-        # which is what pins transformers below 5 without touching anything
-        # outside this project.
+        # so the project's own pins win without touching anything outside it.
         Invoke-Step -Exe 'python' -Arguments @('-m', 'venv', '.venv', '--system-site-packages')
         $venvPy = Join-Path $RepoRoot '.venv\Scripts\python.exe'
         Invoke-Step -Exe $venvPy -Arguments @('-m', 'pip', 'install', '--upgrade', 'pip')
         Invoke-Step -Exe $venvPy -Arguments @(
             '-m', 'pip', 'install',
-            'transformers>=4.57,<5', 'datasets>=2.18', 'mlflow', 'accelerate',
+            'transformers>=4.57,<6', 'datasets>=2.18', 'mlflow', 'accelerate',
             'onnx', 'onnxruntime', 'qdrant-client', 'pytest', 'pytest-cov', 'ruff'
         )
         Invoke-Step -Exe $venvPy -Arguments @('-m', 'pip', 'install', '-e', '.', '--no-deps')
