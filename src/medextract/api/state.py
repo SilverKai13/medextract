@@ -44,6 +44,14 @@ class AppState:
             return []
         return [self.engine.id2label[i] for i in sorted(self.engine.id2label)]
 
+    @property
+    def model_sha256(self) -> str | None:
+        return getattr(self.engine, "model_sha256", None)
+
+    @property
+    def integrity_verified(self) -> bool:
+        return bool(getattr(self.engine, "integrity_verified", False))
+
 
 def load_state(settings: Settings) -> AppState:
     """Build application state, tolerating a missing model or vector store.
@@ -71,6 +79,8 @@ def load_state(settings: Settings) -> AppState:
                 "backend": settings.backend,
                 "load_ms": round((time.perf_counter() - started) * 1000, 1),
                 "labels": state.labels,
+                "model_sha256": state.model_sha256,
+                "integrity_verified": state.integrity_verified,
             },
         )
     except Exception as exc:

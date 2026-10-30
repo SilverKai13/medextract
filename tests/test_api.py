@@ -24,6 +24,43 @@ class TestHealth:
         assert response.json()["status"] == "degraded"
         assert response.json()["model_loaded"] is False
 
+    def test_reports_the_graph_hash_on_the_onnx_backend(
+        self, settings_for, tiny_model_dir, tiny_onnx_dir
+    ):
+        from medextract.export_onnx import check_parity
+
+        check_parity(tiny_model_dir, tiny_onnx_dir)
+        settings = settings_for(model_dir=tiny_onnx_dir, backend="onnx")
+        with TestClient(create_app(settings)) as client:
+            body = client.get("/health").json()
+        assert body["integrity_verified"] is True
+        assert len(body["model_sha256"]) == 64
+
+    def test_the_torch_backend_reports_nothing_to_verify(self, client):
+        body = client.get("/health").json()
+        assert body["model_sha256"] is None
+        assert body["integrity_verified"] is False
+
+    def test_a_tampered_graph_leaves_the_service_degraded_with_the_reason(
+        self, settings_for, tiny_model_dir, tiny_onnx_dir, tmp_path
+    ):
+        """Integrity failure is a load failure like any other: diagnosable from /health."""
+        import shutil
+
+        from medextract.export_onnx import check_parity
+
+        check_parity(tiny_model_dir, tiny_onnx_dir)
+        tampered = tmp_path / "onnx"
+        shutil.copytree(tiny_onnx_dir, tampered)
+        with (tampered / "model.onnx").open("ab") as handle:
+            handle.write(b"\0")
+        with TestClient(create_app(settings_for(model_dir=tampered, backend="onnx"))) as client:
+            health = client.get("/health").json()
+            extract = client.post("/extract", json={"text": "fever"})
+        assert health["status"] == "degraded"
+        assert extract.status_code == 503
+        assert "does not match" in extract.json()["detail"]
+
 
 class TestExtract:
     def test_happy_path(self, client):

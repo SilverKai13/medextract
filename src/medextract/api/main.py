@@ -130,6 +130,8 @@ def register_routes(app: FastAPI) -> None:
             retrieval_available=ctx.retrieval_available,
             uptime_seconds=round(ctx.uptime_seconds, 2),
             version=__version__,
+            model_sha256=ctx.model_sha256,
+            integrity_verified=ctx.integrity_verified,
         )
 
     @app.post("/extract", response_model=ExtractResponse, tags=["extraction"])

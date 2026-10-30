@@ -227,6 +227,11 @@ class NerEngine:
         require_word_alignment(self.tokenizer, purpose="character spans")
         self.id2label = _load_id2label(self.model_dir)
 
+        # Filled in by the ONNX backend; the torch backend serves weights that
+        # no export-time record describes, so it has nothing to verify against.
+        self.model_sha256: str | None = None
+        self.integrity_verified = False
+
         self.loaded_at = time.time()
         if backend == "torch":
             self._init_torch()
@@ -247,12 +252,19 @@ class NerEngine:
     def _init_onnx(self, intra_op_threads: int | None) -> None:
         import onnxruntime as ort
 
+        from medextract.integrity import verify_graph
+
         candidates = [self.model_dir / "model.onnx", self.model_dir / "model_optimized.onnx"]
         onnx_path = next((p for p in candidates if p.exists()), None)
         if onnx_path is None:
             raise FileNotFoundError(
                 f"No model.onnx in {self.model_dir}. Run python -m medextract.export_onnx first."
             )
+
+        # Before the session opens the file: a graph that is not the one the
+        # parity check passed should fail here, with both hashes, not later as
+        # inexplicable predictions. See integrity.py.
+        self.model_sha256, self.integrity_verified = verify_graph(onnx_path)
 
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL

@@ -67,6 +67,13 @@ class HealthResponse(BaseModel):
     retrieval_available: bool
     uptime_seconds: float
     version: str
+    # SHA-256 of the ONNX graph actually loaded, and whether it matched the
+    # hash recorded when that graph passed the parity check. Null / false on
+    # the torch backend, which has no export-time record to check against.
+    model_sha256: str | None = Field(None, description="SHA-256 of the loaded model.onnx.")
+    integrity_verified: bool = Field(
+        False, description="The loaded graph matched the hash recorded at export time."
+    )
 
 
 class SearchRequest(BaseModel):

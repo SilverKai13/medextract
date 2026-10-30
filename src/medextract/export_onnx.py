@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from medextract.config import REPO_ROOT
+from medextract.integrity import PARITY_FILE, file_sha256
 
 log = logging.getLogger(__name__)
 
@@ -255,7 +256,28 @@ def check_parity(
         max_abs_diff,
         argmax_agreement,
     )
+
+    # The record is written only after the check passes, so its presence next
+    # to a graph means exactly one thing: this file, with this hash, was the
+    # one compared against PyTorch. NerEngine checks the hash at load time.
+    onnx_path = onnx_engine.onnx_path
+    result["model_file"] = onnx_path.name
+    result["model_bytes"] = onnx_path.stat().st_size
+    result["model_sha256"] = file_sha256(onnx_path)
+    result["exported_with"] = _library_versions()
+    (Path(onnx_dir) / PARITY_FILE).write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
+
+
+def _library_versions() -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for name in ("torch", "transformers", "onnx", "onnxruntime"):
+        try:
+            module = __import__(name)
+        except ImportError:  # pragma: no cover - only onnx is optional here
+            continue
+        versions[name] = str(getattr(module, "__version__", "unknown"))
+    return versions
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -292,7 +314,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     result = check_parity(ns.model_dir, ns.output_dir, atol=ns.atol, rtol=ns.rtol)
-    (ns.output_dir / "parity.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
     return 0
 
