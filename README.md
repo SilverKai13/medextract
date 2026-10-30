@@ -11,10 +11,7 @@ needs: a fine-tuned model, an optimised runtime, an API, a vector index, and
 the CI to keep them working.
 
 <!-- MEDEXTRACT:STATUS:START -->
-> **Status: the pipeline is complete and tested; the numbers are not filled in
-> yet.** Every table below has a `TODO` in it. Those get replaced by running
-> the commands next to them — the scripts write the tables, they are not
-> transcribed by hand. See [What is not done](#what-is-not-done-yet).
+> **Status: pipeline run completed on 2026-08-20.** Real numbers below, from a fine-tuned model and a 3000-abstract PubMed index. See `docs/sweep_table.md` and `docs/benchmark.md` for full detail.
 <!-- MEDEXTRACT:STATUS:END -->
 
 ---
@@ -65,11 +62,13 @@ POST /extract
 {
   "entities": [
     {"text": "Familial adenomatous polyposis", "label": "Disease",
-     "start": 0, "end": 30, "score": 0.9871}
+     "start": 0, "end": 30, "score": 0.9994},
+    {"text": "APC", "label": "Disease",
+     "start": 70, "end": 73, "score": 0.9990}
   ],
   "text": "Familial adenomatous polyposis is caused by germline mutations in the APC gene.",
-  "model_version": "ncbi-disease-v1",
-  "took_ms": 8.4
+  "model_version": "pubmedbert-ncbi-disease-v1",
+  "took_ms": 67.33
 }
 ```
 
@@ -169,7 +168,7 @@ travels in a `ContextVar` rather than being passed around.
 ## Phase 1 — fine-tuning the NER model
 
 Fine-tunes a BioBERT variant for token classification on
-[NCBI-Disease](https://huggingface.co/datasets/ncbi_disease) (~800 PubMed
+[NCBI-Disease](https://huggingface.co/datasets/ncbi/ncbi_disease) (~800 PubMed
 abstracts, disease mentions annotated). BC5CDR is registered too, for chemicals
 as well as diseases.
 
@@ -203,12 +202,43 @@ make sweep && make report
 <!-- MEDEXTRACT:SWEEP_TABLE:START -->
 | run | base model | lr | batch | epochs | seed | all subwords | val P | val R | val F1 | test F1 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| _TODO — run `make sweep && make report`_ | | | | | | | | | | |
+| pubmedbert_lr3e-5_bs16_ep3 | BiomedNLP-PubMedBERT-base-uncased-abstract | 3e-05 | 16 | 3 | 42 | False | 0.8730 | 0.8907 | 0.8818 | 0.8718 |
+| lr3e-5_bs16_ep3_seed2024 | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 2024 | False | 0.8534 | 0.8729 | 0.8631 | 0.8809 |
+| lr3e-5_bs16_ep5 | biobert-base-cased-v1.2 | 3e-05 | 16 | 5 | 42 | False | 0.8548 | 0.8679 | 0.8613 | 0.8702 |
+| lr3e-5_bs16_ep3_seed1337 | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 1337 | False | 0.8516 | 0.8679 | 0.8597 | 0.8838 |
+| lr3e-5_bs16_ep3_all-subwords | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 42 | True | 0.8483 | 0.8666 | 0.8573 | 0.8767 |
+| lr3e-5_bs16_ep3 | biobert-base-cased-v1.2 | 3e-05 | 16 | 3 | 42 | False | 0.8500 | 0.8640 | 0.8570 | 0.8761 |
+| lr3e-5_bs32_ep5 | biobert-base-cased-v1.2 | 3e-05 | 32 | 5 | 42 | False | 0.8518 | 0.8615 | 0.8566 | 0.8809 |
+| lr5e-5_bs16_ep3 | biobert-base-cased-v1.2 | 5e-05 | 16 | 3 | 42 | False | 0.8405 | 0.8640 | 0.8521 | 0.8746 |
+| lr2e-5_bs16_ep3 | biobert-base-cased-v1.2 | 2e-05 | 16 | 3 | 42 | False | 0.8309 | 0.8742 | 0.8520 | 0.8804 |
 <!-- MEDEXTRACT:SWEEP_TABLE:END -->
 
 **Target: F1 above 0.85** on NCBI-Disease, which is roughly in line with
 published baselines — so a number well below it means something is broken
 rather than that the task is hard.
+
+**Met, by every arm.** Validation F1 spans 0.8520–0.8818 and test F1
+0.8702–0.8838. The best test F1 is **0.8838**.
+
+The seed repeats are the part worth reading. The same configuration under seeds
+42, 1337 and 2024 gives validation F1 0.8570 / 0.8597 / 0.8631 — a spread of
+**0.0061** from nothing but initialisation and data order. Set the rest of the
+table against that:
+
+- All eight BioBERT arms fall in a 0.0111 band, under two seed-widths. **No
+  hyperparameter in this grid is distinguishable from another.**
+- The subword convention, the thing that got its own arm, moves validation F1
+  by **0.0004**. That is a fifteenth of the noise. It does not matter here.
+- PubMedBERT is the one real effect: +0.0187 validation F1 over the best
+  BioBERT arm, about three seed-widths, driven by recall (0.8907 vs ~0.87).
+
+And the caution that follows: validation and test F1 are **negatively**
+correlated across the nine arms (r = −0.40). PubMedBERT wins on validation and
+places seventh of nine on test. With ~900 sentences per split and one seed per
+arm, that is what differences this size look like — noise, not a ranking.
+Selecting the export by validation F1 is a defensible rule, not a claim that
+the selected arm generalises best. Believing any of these gaps would need more
+seeds per arm, not more arms.
 
 Scoring is strict entity-level IOB2 matching (exact span and type), which is
 what those baselines report. Token accuracy is not used: most tokens are `O`,
@@ -240,7 +270,14 @@ softmax confidences move.
 <!-- MEDEXTRACT:BENCHMARK_TABLE:START -->
 | backend | batch | p50 (ms) | p90 (ms) | p95 (ms) | p99 (ms) | throughput (seq/s) |
 |---|---|---|---|---|---|---|
-| _TODO — run `make benchmark`_ | | | | | | |
+| pytorch_eager | 1 | 50.086 | 54.795 | 55.816 | 56.91 | 19.97 |
+| pytorch_eager | 16 | 187.124 | 198.573 | 201.143 | 217.542 | 85.5 |
+| onnxruntime | 1 | 18.387 | 19.572 | 19.955 | 20.929 | 54.39 |
+| onnxruntime | 16 | 142.19 | 152.621 | 155.797 | 158.776 | 112.53 |
+
+ONNX Runtime speedup over PyTorch eager at p50 — batch 1: 2.72x, batch 16: 1.32x.
+
+Measured on Windows-11-10.0.26200-SP0, 16 vCPU, torch 2.6.0+cu124, onnxruntime 1.26.0. CPU only, no GPU involved.
 <!-- MEDEXTRACT:BENCHMARK_TABLE:END -->
 
 Percentiles rather than means: the mean hides the tail and the tail is what a
@@ -248,8 +285,11 @@ caller notices. The script records the hardware and thread settings it ran on
 into `docs/benchmark.json`, because a speedup number without them is not a
 claim anyone can check.
 
-Expect somewhere between 2x and 4x on CPU. **Do not quote a number from that
-range — measure it.**
+Measured here: **2.72x at batch 1, 1.32x at batch 16** — 50.1 ms to 18.4 ms
+p50 for a single sequence. The gain shrinks with batch size because a larger
+batch already saturates the CPU, leaving ONNX Runtime's per-call overhead
+savings less to recover. Both numbers come from `make benchmark` on the
+hardware named above; on different hardware, measure it again.
 
 ## Phase 3 — serving
 
@@ -307,14 +347,23 @@ deploy time. The measured size appears in the workflow summary.
 |---|---|
 | Runtime dependencies, measured | **390 MB** (clean venv from `requirements-serve.txt`, torch absent) |
 | `python:3.11-slim-bookworm` base | ~150 MB |
-| Expected image size | **~560 MB**, comfortably inside the budget |
-| Image size, actually built | _TODO — no Docker daemon in the build environment; the first CI run reports it, or locally `make docker && make docker-size`_ |
+| Expected image size | ~560 MB, from adding the two above |
+| **Image size, actually built** | **395 MB** — `make docker && make docker-size` |
 
 The 390 MB is a real measurement, not an estimate: a fresh virtualenv built
 from `requirements-serve.txt`. The serving path was then run inside it with
 PyTorch confirmed absent — ONNX inference, `/health` and `/extract` all work —
 which is the check that matters, since a runtime dependency set that is 390 MB
-but incomplete would be worse than a larger one that works.
+but incomplete would be worse than a larger one that works. The same check
+passes in the built image: `torch`, `datasets` and `mlflow` are absent,
+`onnxruntime`, `transformers`, `fastapi` and `qdrant-client` are present.
+
+**The 560 MB estimate was wrong, and worth saying why.** It double-counted:
+that 390 MB venv includes packages sitting on top of a Python installation the
+base image already provides, so adding the two figures counts the shared
+substrate twice. The real number is 395 MB — 26% of the budget, not 37%. An
+estimate that errs toward caution is the harmless direction, but it was an
+estimate, which is exactly why the row above it now holds a measurement.
 
 The workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
 
@@ -380,9 +429,16 @@ cheaper than that. `--allow-hashing-fallback` overrides it for smoke tests.
 
 ## Limitations
 
-- **Two entity types.** NCBI-Disease annotates diseases; BC5CDR adds chemicals.
-  Genes are mentioned in the project description above and are *not* covered by
-  either corpus as configured. Extracting genes would need a third corpus.
+- **One entity type, as shipped.** The exported model is trained on
+  NCBI-Disease, so it emits `Disease` and nothing else. BC5CDR is registered
+  and loads, which would add `Chemical`, but no arm has been run against it.
+  Genes are covered by neither corpus and would need a third.
+- **Gene symbols get tagged as diseases.** In the worked example above, `APC`
+  in "mutations in the APC gene" comes back as a `Disease` at 0.999. That is
+  partly the corpus — NCBI-Disease does annotate `APC` where it stands for
+  adenomatous polyposis coli, the disease — and partly a genuine
+  false positive, since here it is plainly the gene. The model has no way to
+  tell those uses apart and nothing downstream disambiguates them.
 - **Abstracts, not clinical notes.** Both corpora are PubMed abstracts —
   edited academic prose. Real clinical notes are abbreviated, ungrammatical,
   full of local shorthand and negation. Performance on them would be
@@ -406,39 +462,9 @@ cheaper than that. `--allow-hashing-fallback` overrides it for smoke tests.
 ## What is not done yet
 
 <!-- MEDEXTRACT:NOT_DONE:START -->
-Honest inventory. Code and tests for every phase are written and passing; the
-measurements are not taken, because the environment this was built in has no
-GPU and its network policy blocks `huggingface.co` and
-`eutils.ncbi.nlm.nih.gov` — so BioBERT, NCBI-Disease and PubMed could not be
-downloaded.
+Every phase has been run end to end on real data: training, ONNX export with a passing parity check, benchmarking, retrieval indexing, and a running container answering at `http://localhost:8000`. That is a local deployment, not a hosted one -- there is no public URL.
 
-| | Status |
-|---|---|
-| Training pipeline, alignment, MLflow, sweep | Written, tested offline |
-| ONNX export, parity check, benchmark harness | Written, tested end-to-end on a stub model |
-| API, schemas, logging, tests | Written, 23 tests passing |
-| Retrieval, E-utilities client, Qdrant | Written, 29 tests passing against mocks and in-memory Qdrant |
-| Dockerfile, compose, CI workflow | Written; image not built (no Docker daemon), but the runtime dependency set is measured at 390 MB and verified to run the API without PyTorch |
-| **Fine-tuned weights and an F1 number** | **Not done — needs a run** |
-| **ONNX speedup measurement** | **Not done — needs the weights** |
-| **Indexed PubMed corpus** | **Not done — needs the fetch** |
-| **Deployment and a live URL** | **Not done** |
-
-To fill those in, on a machine with network access and ideally a GPU, run the
-one-command pipeline (see [Quickstart](#quickstart-one-command) above) or the
-steps individually:
-
-```bash
-pip install -e ".[dev,serve,train]"
-make sweep && make report      # fills the Phase 1 table
-make export && make benchmark  # fills the Phase 2 table
-make fetch && make index       # builds the retrieval corpus
-make up                        # runs the whole thing
-```
-
-Do not write CV bullets from this README until those tables have real numbers
-in them. The point of building it is being able to answer questions about it
-under pressure, and "roughly 3x, I think" is not an answer.
+Two kinds of gap remain, and they are not the same kind. The ones under [Limitations](#limitations) -- entity types, clinical-note performance, negation, entity linking, relation extraction, corpus scale -- are scope decisions. The ones in [docs/TODO.md](docs/TODO.md) are genuinely unfinished: latency under concurrency is unmeasured, CI has no dependency vulnerability scan, and the base image is pinned by tag rather than digest.
 <!-- MEDEXTRACT:NOT_DONE:END -->
 
 ## Licence
