@@ -11,6 +11,9 @@ __pycache__
 htmlcov
 .coverage
 mlruns
+mlflow.db
+mlartifacts
+*.log
 artifacts
 data
 docs/benchmark.json

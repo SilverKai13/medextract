@@ -37,7 +37,7 @@ def detect_pooling(model_name_or_path: str) -> str:
             if local.exists()
             else Path(hf_hub_download(model_name_or_path, POOLING_CONFIG_NAME))
         )
-        config = json.loads(path.read_text())
+        config = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         log.warning("could not read pooling config (%s); assuming mean pooling", exc)
         return "mean"
@@ -52,11 +52,16 @@ def detect_pooling(model_name_or_path: str) -> str:
 
 def export_embedder(model_name: str, output_dir: Path, *, opset: int = 14) -> Path:
     import torch
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import AutoModel
+
+    from medextract.tokenization import load_fast_tokenizer
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    # Same loader the NER side uses, so a query encoder whose checkpoint is
+    # missing its tokenizer config cannot end up casing queries differently
+    # from the documents it was indexed against.
+    tokenizer = load_fast_tokenizer(model_name)
     model = AutoModel.from_pretrained(model_name)
     model.eval()
 
@@ -105,7 +110,8 @@ def export_embedder(model_name: str, output_dir: Path, *, opset: int = 14) -> Pa
                 "dimension": int(model.config.hidden_size),
             },
             indent=2,
-        )
+        ),
+        encoding="utf-8",
     )
     log.info("embedder exported to %s (%.1f MB)", onnx_path, onnx_path.stat().st_size / 1e6)
     return onnx_path

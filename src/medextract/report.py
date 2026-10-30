@@ -9,9 +9,8 @@ regenerate it after a sweep instead of transcribing numbers by hand.
 from __future__ import annotations
 
 import argparse
-import os
 
-from medextract.config import REPO_ROOT
+from medextract.config import mlflow_tracking_uri
 
 PARAM_COLUMNS = [
     ("base_model", "base model"),
@@ -48,9 +47,7 @@ def build_table(
 ) -> str:
     import mlflow
 
-    mlflow.set_tracking_uri(
-        tracking_uri or os.environ.get("MLFLOW_TRACKING_URI", f"file://{REPO_ROOT / 'mlruns'}")
-    )
+    mlflow.set_tracking_uri(tracking_uri or mlflow_tracking_uri())
     exp = mlflow.get_experiment_by_name(experiment)
     if exp is None:
         raise SystemExit(f"No MLflow experiment named {experiment!r}. Run a sweep first.")

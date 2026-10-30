@@ -38,7 +38,7 @@ MIT.
 
 def _write(tmp_path, content=SAMPLE_README):
     path = tmp_path / "README.md"
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     return path
 
 
@@ -52,7 +52,7 @@ class TestSyncReadme:
             status_text="new status",
             not_done_text="new not-done text",
         )
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "new status" in text
         assert "| new | table |" in text
         assert "| new | bench |" in text
@@ -71,7 +71,7 @@ class TestSyncReadme:
             status_text="z",
             not_done_text="w",
         )
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "# MedExtract" in text
         assert "## Licence" in text
         assert "MIT." in text
@@ -81,7 +81,7 @@ class TestSyncReadme:
         sync_readme(
             path, sweep_table_md="x", benchmark_table_md="y", status_text="z", not_done_text="w"
         )
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for marker in ("STATUS", "SWEEP_TABLE", "BENCHMARK_TABLE", "NOT_DONE"):
             assert f"<!-- MEDEXTRACT:{marker}:START -->" in text
             assert f"<!-- MEDEXTRACT:{marker}:END -->" in text
@@ -95,9 +95,9 @@ class TestSyncReadme:
             "not_done_text": "new not-done text",
         }
         sync_readme(path, **kwargs)
-        once = path.read_text()
+        once = path.read_text(encoding="utf-8")
         sync_readme(path, **kwargs)
-        assert path.read_text() == once
+        assert path.read_text(encoding="utf-8") == once
 
     def test_missing_marker_raises_with_the_marker_name(self, tmp_path):
         broken = SAMPLE_README.replace("<!-- MEDEXTRACT:STATUS:START -->", "")
@@ -111,7 +111,7 @@ class TestSyncReadme:
         """The actual project README, not a fixture -- catches drift."""
         from medextract.config import REPO_ROOT
 
-        text = (REPO_ROOT / "README.md").read_text()
+        text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         for marker in ("STATUS", "SWEEP_TABLE", "BENCHMARK_TABLE", "NOT_DONE"):
             assert f"<!-- MEDEXTRACT:{marker}:START -->" in text
             assert f"<!-- MEDEXTRACT:{marker}:END -->" in text

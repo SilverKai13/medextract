@@ -19,7 +19,12 @@ htmlcov/
 artifacts/*
 !artifacts/.gitkeep
 mlruns/
+mlflow.db
+mlartifacts/
 data/
 *.onnx
 *.onnx_data
 docs/benchmark.json
+
+# Run logs from long-running stages (sweep, fetch, docker build).
+*.log

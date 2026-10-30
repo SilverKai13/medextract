@@ -265,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     result = check_parity(ns.model_dir, ns.output_dir, atol=ns.atol, rtol=ns.rtol)
-    (ns.output_dir / "parity.json").write_text(json.dumps(result, indent=2))
+    (ns.output_dir / "parity.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
     return 0
 

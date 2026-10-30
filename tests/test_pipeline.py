@@ -56,7 +56,7 @@ class TestMaybeRunSweep:
             {"run_name": "arm1", "validation": {"eval_f1": 0.9}, "test": {"test_f1": 0.9}},
             {"run_name": "arm2", "validation": {"eval_f1": 0.8}, "test": {"test_f1": 0.8}},
         ]
-        (output_root / "sweep_results.json").write_text(json.dumps(existing))
+        (output_root / "sweep_results.json").write_text(json.dumps(existing), encoding="utf-8")
 
         called = {"n": 0}
 
@@ -74,7 +74,8 @@ class TestMaybeRunSweep:
         output_root = tmp_path / "sweep"
         output_root.mkdir()
         (output_root / "sweep_results.json").write_text(
-            json.dumps([{"run_name": "arm1", "validation": {}, "test": {}}])
+            json.dumps([{"run_name": "arm1", "validation": {}, "test": {}}]),
+            encoding="utf-8",
         )
 
         called = {"n": 0}
@@ -98,7 +99,8 @@ class TestMaybeRunSweep:
                     {"run_name": "arm1", "validation": {}, "test": {}},
                     {"run_name": "arm2", "validation": {}, "test": {}},
                 ]
-            )
+            ),
+            encoding="utf-8",
         )
 
         called = {"n": 0}
@@ -136,17 +138,17 @@ class TestDockerAvailable:
 class TestUpdateEnvVar:
     def test_appends_a_new_key(self, tmp_path):
         path = tmp_path / ".env"
-        path.write_text("MEDEXTRACT_MODEL_DIR=artifacts/onnx\n")
+        path.write_text("MEDEXTRACT_MODEL_DIR=artifacts/onnx\n", encoding="utf-8")
         update_env_var(path, "MEDEXTRACT_QDRANT_URL", "http://localhost:6333")
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "MEDEXTRACT_MODEL_DIR=artifacts/onnx" in text
         assert "MEDEXTRACT_QDRANT_URL=http://localhost:6333" in text
 
     def test_overwrites_an_existing_key_in_place(self, tmp_path):
         path = tmp_path / ".env"
-        path.write_text("MEDEXTRACT_QDRANT_URL=old\nMEDEXTRACT_LOG_LEVEL=INFO\n")
+        path.write_text("MEDEXTRACT_QDRANT_URL=old\nMEDEXTRACT_LOG_LEVEL=INFO\n", encoding="utf-8")
         update_env_var(path, "MEDEXTRACT_QDRANT_URL", "new")
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
         assert "MEDEXTRACT_QDRANT_URL=new" in lines
         assert "MEDEXTRACT_LOG_LEVEL=INFO" in lines
         assert len(lines) == 2
@@ -155,7 +157,7 @@ class TestUpdateEnvVar:
         monkeypatch.setattr("medextract.pipeline.REPO_ROOT", tmp_path)
         path = tmp_path / ".env"
         update_env_var(path, "MEDEXTRACT_QDRANT_URL", "http://localhost:6333")
-        assert "MEDEXTRACT_QDRANT_URL=http://localhost:6333" in path.read_text()
+        assert "MEDEXTRACT_QDRANT_URL=http://localhost:6333" in path.read_text(encoding="utf-8")
 
 
 class TestMaybeFetchPubmed:

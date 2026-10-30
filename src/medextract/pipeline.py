@@ -73,7 +73,7 @@ def maybe_run_sweep(
     wanted_names = {a.run_name for a in arms}
 
     if results_path.exists() and not force_retrain:
-        existing = json.loads(results_path.read_text())
+        existing = json.loads(results_path.read_text(encoding="utf-8"))
         existing_names = {r["run_name"] for r in existing}
         if wanted_names <= existing_names:
             log.info(
@@ -127,7 +127,7 @@ def update_env_var(path: Path, key: str, value: str) -> None:
     if not path.exists() and example.exists():
         shutil.copy(example, path)
 
-    lines = path.read_text().splitlines() if path.exists() else []
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     prefix = f"{key}="
     for i, line in enumerate(lines):
         if line.startswith(prefix):
@@ -135,7 +135,7 @@ def update_env_var(path: Path, key: str, value: str) -> None:
             break
     else:
         lines.append(f"{key}={value}")
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def wait_for_url(url: str, *, timeout: float = 120.0, interval: float = 2.0) -> bool:
@@ -206,13 +206,31 @@ def status_text(*, corpus_size: int | None) -> str:
 
 
 def not_done_text(*, live_url: str | None) -> str:
-    deployment = f"the live API at `{live_url}`" if live_url else "not deployed in this run"
+    """The honest inventory, generated rather than typed.
+
+    Deliberately does not claim that everything remaining is a scope decision.
+    A local container answering on localhost is a working system, not a
+    deployment, and docs/TODO.md carries real outstanding work -- saying
+    otherwise here would be the one place in this README where a claim outran
+    the evidence.
+    """
+    if live_url:
+        deployment = (
+            f"a running container answering at `{live_url}`. That is a local "
+            "deployment, not a hosted one -- there is no public URL"
+        )
+    else:
+        deployment = "no running service in this pass"
     return (
-        f"Every phase has been run end to end: training, ONNX export, benchmarking, "
-        f"retrieval indexing, and {deployment}. Remaining gaps are the ones documented "
-        "under [Limitations](#limitations) -- entity types, clinical-note performance, "
-        "negation, entity linking, relation extraction, and corpus scale -- which are "
-        "scope decisions, not unfinished work."
+        "Every phase has been run end to end on real data: training, ONNX export with "
+        f"a passing parity check, benchmarking, retrieval indexing, and {deployment}."
+        "\n\n"
+        "Two kinds of gap remain, and they are not the same kind. The ones under "
+        "[Limitations](#limitations) -- entity types, clinical-note performance, "
+        "negation, entity linking, relation extraction, corpus scale -- are scope "
+        "decisions. The ones in [docs/TODO.md](docs/TODO.md) are genuinely unfinished: "
+        "latency under concurrency is unmeasured, CI has no dependency vulnerability "
+        "scan, and the base image is pinned by tag rather than digest."
     )
 
 
@@ -250,7 +268,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
     sweep_table = build_table(ns.experiment)
     sweep_table_path = REPO_ROOT / "docs" / "sweep_table.md"
     sweep_table_path.parent.mkdir(parents=True, exist_ok=True)
-    sweep_table_path.write_text(sweep_table + "\n")
+    sweep_table_path.write_text(sweep_table + "\n", encoding="utf-8")
 
     from medextract.export_onnx import check_parity, export
     from medextract.retrieval.export_embedder import export_embedder
@@ -266,8 +284,10 @@ def run_pipeline(argv: list[str] | None = None) -> int:
 
     benchmark_results = run_benchmark(model_dir, ONNX_DIR)
     benchmark_table = to_markdown(benchmark_results)
-    (REPO_ROOT / "docs" / "benchmark.json").write_text(json.dumps(benchmark_results, indent=2))
-    (REPO_ROOT / "docs" / "benchmark.md").write_text(benchmark_table + "\n")
+    (REPO_ROOT / "docs" / "benchmark.json").write_text(
+        json.dumps(benchmark_results, indent=2), encoding="utf-8"
+    )
+    (REPO_ROOT / "docs" / "benchmark.md").write_text(benchmark_table + "\n", encoding="utf-8")
 
     corpus_size: int | None = None
     live_url: str | None = None

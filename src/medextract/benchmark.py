@@ -193,10 +193,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     ns.json_out.parent.mkdir(parents=True, exist_ok=True)
-    ns.json_out.write_text(json.dumps(results, indent=2))
+    ns.json_out.write_text(json.dumps(results, indent=2), encoding="utf-8")
     markdown = to_markdown(results)
     ns.markdown_out.parent.mkdir(parents=True, exist_ok=True)
-    ns.markdown_out.write_text(markdown + "\n")
+    ns.markdown_out.write_text(markdown + "\n", encoding="utf-8")
     print(markdown)
     return 0
 

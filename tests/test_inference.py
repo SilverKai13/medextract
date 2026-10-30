@@ -167,3 +167,128 @@ class TestEngine:
     def test_missing_onnx_graph_gives_actionable_error(self, tiny_model_dir):
         with pytest.raises(FileNotFoundError, match="export_onnx"):
             NerEngine(tiny_model_dir, backend="onnx")
+
+
+class TestSubwordAggregation:
+    """Word-level aggregation of subword predictions.
+
+    Under the default alignment convention only a word's first subword is
+    supervised; continuations get IGNORE_INDEX and never contribute to the
+    loss. Their predictions are therefore noise, and reading them splits
+    entities apart. Observed on a real fine-tuned model, `nephrotoxicity` came
+    back as the fragments "ne" and "rot".
+
+    Evaluation could not catch this -- `metrics.decode_predictions` drops
+    exactly the positions that cause it -- so it needs pinning here.
+    """
+
+    def _decode_words(self, text, labels, offsets, word_ids, scores=None):
+        n = len(labels)
+        return decode_entities(
+            text,
+            np.array(labels),
+            np.array(scores if scores is not None else [0.9] * n),
+            np.array(offsets),
+            np.array([False] * n),
+            ID2LABEL,
+            word_ids=word_ids,
+        )
+
+    def test_a_stray_o_inside_a_word_does_not_split_it(self):
+        """The exact observed failure: B-Disease, O, I-Disease across one word."""
+        text = "nephrotoxicity"
+        entities = self._decode_words(
+            text,
+            [1, 0, 2],  # only the first is supervised; the rest are noise
+            [(0, 2), (2, 5), (5, 14)],
+            word_ids=[0, 0, 0],
+        )
+        assert [(e.text, e.start, e.end) for e in entities] == [("nephrotoxicity", 0, 14)]
+
+    def test_the_word_takes_its_label_from_the_first_subword(self):
+        """A continuation predicting an entity cannot invent one."""
+        text = "treatment"
+        entities = self._decode_words(
+            text,
+            [0, 1, 2],  # first subword says O, so the word is O
+            [(0, 5), (5, 7), (7, 9)],
+            word_ids=[0, 0, 0],
+        )
+        assert entities == []
+
+    def test_the_word_takes_its_score_from_the_first_subword(self):
+        text = "carcinoma"
+        entities = self._decode_words(
+            text,
+            [1, 0, 0],
+            [(0, 4), (4, 7), (7, 9)],
+            word_ids=[0, 0, 0],
+            scores=[0.97, 0.11, 0.12],
+        )
+        assert entities[0].score == pytest.approx(0.97)
+
+    def test_multi_word_entities_still_merge(self):
+        """Aggregating within words must not stop spans running across them."""
+        text = "familial adenomatous polyposis found"
+        entities = self._decode_words(
+            text,
+            [1, 2, 2, 2, 0, 0],
+            [(0, 8), (9, 13), (13, 20), (21, 26), (26, 30), (31, 36)],
+            word_ids=[0, 1, 1, 2, 2, 3],
+        )
+        assert [(e.text, e.start, e.end) for e in entities] == [
+            ("familial adenomatous polyposis", 0, 30)
+        ]
+
+    def test_adjacent_words_of_different_types_stay_separate(self):
+        text = "cisplatin nephropathy"
+        entities = self._decode_words(
+            text,
+            [3, 4, 1, 2],
+            [(0, 3), (3, 9), (10, 15), (15, 21)],
+            word_ids=[0, 0, 1, 1],
+        )
+        assert [(e.text, e.label) for e in entities] == [
+            ("cisplatin", "Chemical"),
+            ("nephropathy", "Disease"),
+        ]
+
+    def test_special_tokens_are_still_excluded(self):
+        text = "cancer"
+        entities = decode_entities(
+            text,
+            np.array([1, 1, 1]),
+            np.array([0.9, 0.9, 0.9]),
+            np.array([(0, 0), (0, 6), (0, 0)]),
+            np.array([True, False, True]),
+            ID2LABEL,
+            word_ids=[None, 0, None],
+        )
+        assert [(e.start, e.end) for e in entities] == [(0, 6)]
+
+    def test_omitting_word_ids_keeps_per_token_decoding(self):
+        """The token-level path stays available for callers already at that level."""
+        text = "nephrotoxicity"
+        entities = decode_entities(
+            text,
+            np.array([1, 0, 2]),
+            np.array([0.9, 0.9, 0.9]),
+            np.array([(0, 2), (2, 5), (5, 14)]),
+            np.array([False] * 3),
+            ID2LABEL,
+        )
+        assert len(entities) == 2
+
+
+def test_predicted_spans_never_start_mid_word(tiny_model_dir):
+    """End to end through the engine: no fragment shorter than its own word."""
+    engine = NerEngine(tiny_model_dir, backend="torch")
+    text = "The patient has familial adenomatous polyposis with APC gene mutations."
+    for entity in engine.predict_one(text):
+        assert text[entity.start : entity.end] == entity.text
+        # A span boundary landing inside an alphanumeric run means a subword
+        # was decoded independently of the word it belongs to.
+        if entity.start > 0:
+            assert not (text[entity.start - 1].isalnum() and text[entity.start].isalnum())
+        if entity.end < len(text):
+            assert not (text[entity.end - 1].isalnum() and text[entity.end].isalnum())

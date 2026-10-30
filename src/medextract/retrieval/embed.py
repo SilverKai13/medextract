@@ -87,7 +87,7 @@ class OnnxEmbedder:
             )
 
         config_path = self.model_dir / "embedder_config.json"
-        config = json.loads(config_path.read_text()) if config_path.exists() else {}
+        config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
         self.pooling = config.get("pooling", "mean")
         self.model_name = config.get("model_name", str(self.model_dir))
 
