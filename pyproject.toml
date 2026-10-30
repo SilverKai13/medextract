@@ -44,7 +44,7 @@ serve = [
 dev = [
     "pytest>=8.1",
     "pytest-cov>=5.0",
-    "ruff>=0.4",
+    "ruff==0.15.20",
     "pip-audit>=2.7",
 ]
 

@@ -17,7 +17,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install ruff
+      # Pinned to the version the tree is formatted with; a newer formatter
+      # can disagree about a line and fail a build nobody changed.
+      - run: pip install ruff==0.15.20
       - name: ruff check
         run: ruff check .
       - name: ruff format --check
